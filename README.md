@@ -1,6 +1,6 @@
 # Microsoft Foundry PTU 배포 가이드
 
-Microsoft Foundry(신규 포털)에서 **PTU(Provisioned Throughput Unit)** 배포를 만들고, 429 를 다루고, 스필오버로 트래픽을 흘려보내는 방법을 다룬다.
+Microsoft Foundry(신규 포털)에서 [**PTU(Provisioned Throughput Unit)**](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/concepts/provisioned-throughput) 배포를 만들고, 429 를 다루고, 스필오버로 트래픽을 흘려보내는 방법을 다룬다.
 
 포털 화면은 `minwook-foundry-northcentral-us` 프로젝트에서 `gpt-image-2` 모델을 **Global Provisioned Throughput 100 PTU** 로 배포한 실제 캡처를 사용한다. 개념과 코드는 다른 모델(gpt-5.x 계열 등)에도 그대로 적용된다.
 
@@ -17,7 +17,6 @@ Microsoft Foundry(신규 포털)에서 **PTU(Provisioned Throughput Unit)** 배�
 7. [429 대응 전략 선택](#6-429-대응-전략-선택)
 8. [모니터링](#7-모니터링)
 9. [정리 — 과금 중단](#8-정리--과금-중단)
-10. [참고 문서](#9-참고-문서)
 
 ---
 
@@ -77,6 +76,8 @@ flowchart LR
 - **쿼터가 있다고 용량이 보장되지 않는다.** 용량은 하루 중에도 계속 변한다.
 - **배포를 줄이거나 지우면 용량이 리전 풀로 반환**되고, 다시 올릴 때 같은 용량이 있다는 보장이 없다.
 - **예약(Reservation)도 용량을 보장하지 않는다.** 반드시 **배포를 먼저 만들어 용량을 확인한 뒤** 예약을 산다.
+
+쿼터가 모자라면 [PTU 쿼터 요청 폼](https://aka.ms/oai/stuquotarequest)으로 증설을 신청한다(포털 **Manage → Quota** 에서도 같은 폼으로 간다). 승인까지 며칠 걸릴 수 있다.
 
 ### 1.4 PTU 사이징
 
@@ -151,7 +152,7 @@ flowchart LR
     style Run fill:#dcfce7,stroke:#16a34a
 ```
 
-> `max_tokens` 를 실제 생성량보다 크게 잡으면 버킷을 과하게 채워 **동시 처리량이 줄어든다.** 가능한 한 실제 값에 가깝게 지정할 것.
+> `max_tokens` 를 실제 생성량보다 크게 잡으면 버킷을 과하게 채워 **동시 처리량이 줄어든다.** 가능한 한 실제 값에 가깝게 지정할 것. 이 leaky bucket 동작과 429 대응 지침의 원문은 [프로덕션 운영 문서](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/provisioned-get-started)에 있다.
 
 ### 2.3 429 대응 3가지 경로
 
@@ -275,13 +276,13 @@ sequenceDiagram
 
 ![Traffic spillover](images/foundry-discover-models-gpt-image-2-deploy-settings-spill-over.png)
 
-**Traffic spillover** 토글을 켜면 **Spillover deployment** 를 골라야 한다. 이것이 배포 속성 `spilloverDeploymentName` 에 해당한다.
+**Traffic spillover** 토글을 켜면 **Spillover deployment** 를 골라야 한다. 이것이 [스필오버 문서](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/spillover-traffic-management)가 설명하는 배포 속성 `spilloverDeploymentName` 에 해당한다.
 
 > ⚠️ 캡처의 경고 그대로: **동일 모델·동일 버전의 활성 표준(PayGo) 배포가 같은 리소스 안에 최소 하나 있어야** 스필오버를 켤 수 있다. 없으면 드롭다운이 비어 Deploy 가 막힌다.
 >
 > → **표준 배포를 먼저 만들고, 그다음 PTU 배포를 만들면서 스필오버를 지정**하는 순서가 편하다. 이미 만든 PTU 배포에 나중에 추가해도 된다.
 
-REST 로 설정할 경우:
+REST([Deployments - Create Or Update](https://learn.microsoft.com/en-us/rest/api/aiservices/accountmanagement/deployments/create-or-update))로 설정할 경우:
 
 ```bash
 curl -X PUT "https://management.azure.com/subscriptions/<SUB_ID>/resourceGroups/<RG>/providers/Microsoft.CognitiveServices/accounts/<ACCOUNT>/deployments/gpt-image-2?api-version=2024-10-01" \
@@ -310,7 +311,7 @@ Playground 의 **View code** 를 누르면,
 
 ![Sample code](images/foundry-build-models-gpt-image-2-sample-code.png)
 
-Language / Authentication method 를 고른 샘플이 나온다. **Entra ID authentication** 기준 Python 코드가 이 리포 스크립트의 출발점이다.
+Language / Authentication method 를 고른 샘플이 나온다. **Entra ID authentication** 기준 Python 코드가 이 리포 스크립트의 출발점이다. 다른 언어(.NET, JavaScript, Java, Go)의 동일 예제는 [Azure OpenAI SDK language support](https://learn.microsoft.com/en-us/azure/foundry/openai/supported-languages) 에 있다.
 
 ```python
 from openai import OpenAI
@@ -446,6 +447,8 @@ FOUNDRY_BURST=20 FOUNDRY_MAX_ATTEMPTS=6 python foundry-ptu-429-retry.py
 
 `retry-after-ms` 가 있으면 그 값을, 없으면 지수 백오프(1s → 2s → 4s …, 상한 30s)를 쓴다. 동시 요청이 같은 시각에 재차 몰리지 않도록 25% 지터를 더한다. 워커별 시도 횟수와 총 대기 시간이 요약으로 나온다.
 
+이 스크립트는 429 동작을 눈으로 보기 위한 것이다. 실제 용량 산정을 위한 부하 테스트에는 [azure-openai-benchmark](https://github.com/Azure/azure-openai-benchmark) 를 쓰고, 정상 상태 수치를 얻으려면 최소 10분 이상 돌린다.
+
 **③ 클라이언트 측 스필오버**
 
 ```bash
@@ -496,7 +499,7 @@ client.with_options(max_retries=5).chat.completions.create(...)
 
 ### 7.1 PTU 사용률
 
-Azure Portal → 리소스 → **Metrics** → **Provisioned-managed utilization V2**
+Azure Portal → 리소스 → **Metrics** → **[Provisioned-managed utilization V2](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/provisioned-get-started#measure-deployment-utilization)**
 
 ```
 PTU 사용률 = 기간 내 소비 PTU / 기간 내 배포 PTU
@@ -514,7 +517,7 @@ PTU 사용률 = 기간 내 소비 PTU / 기간 내 배포 PTU
 | `StatusCode` | 200 / 429 분포 |
 | `IsSpillover` | **표준 배포로 들어온 트래픽 중 스필오버분만 분리** |
 
-> 중요: 스필오버된 요청은 PTU 배포 쪽에 429 로 **집계되지 않는다.** 표준 배포에 `IsSpillover = True` + 최종 상태 코드(보통 200)로 기록된다. PTU 배포의 429 카운트만 보고 "스필오버가 없다"고 판단하면 안 된다.
+> 중요: 스필오버된 요청은 PTU 배포 쪽에 429 로 **집계되지 않는다.** 표준 배포에 `IsSpillover = True` + 최종 상태 코드(보통 200)로 기록된다. PTU 배포의 429 카운트만 보고 "스필오버가 없다"고 판단하면 안 된다. 분할 적용 화면과 차트 예시는 [스필오버 모니터링 문서](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/spillover-traffic-management#monitor-spillover-usage)에 있다.
 
 ---
 
@@ -526,15 +529,3 @@ PTU 사용률 = 기간 내 소비 PTU / 기간 내 배포 PTU
 2. 리소스도 지운다면 **모든 배포를 지운 뒤** 리소스를 삭제한다.
 3. 삭제한 리소스를 **purge** 해 과금을 확실히 끊는다.
 4. **예약은 배포 삭제로 취소되지 않는다.** Azure Portal → Reservations 에서 별도로 취소/교환한다 (수수료 발생 가능).
-
----
-
-## 9. 참고 문서
-
-- [Provisioned throughput for Foundry Models](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/concepts/provisioned-throughput)
-- [Operate provisioned throughput deployments in production](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/provisioned-get-started)
-- [Manage traffic with spillover for provisioned deployments](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/spillover-traffic-management)
-- [Azure OpenAI SDK language support](https://learn.microsoft.com/en-us/azure/foundry/openai/supported-languages)
-- [Deployments - Create Or Update (REST)](https://learn.microsoft.com/en-us/rest/api/aiservices/accountmanagement/deployments/create-or-update)
-- [azure-openai-benchmark (부하 테스트 도구)](https://github.com/Azure/azure-openai-benchmark)
-- [PTU 쿼터 요청 폼](https://aka.ms/oai/stuquotarequest)
