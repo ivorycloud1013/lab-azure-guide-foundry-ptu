@@ -144,21 +144,23 @@ def call(client, args):
 
 def dump_headers(title, status, headers):
     """응답 헤더를 그룹으로 나눠 출력한다. 분류에 없는 헤더는 etc 로 함께 찍는다."""
-    print(f"\n=== {title} | HTTP {status} ===")
+    log.info("")
+    log.info(f"=== {title} | HTTP {status} ===")
     lowered = {key.lower(): value for key, value in headers.items()}
     grouped = set()
+    log.info("[응답 헤더]")
     for group, names in HEADER_GROUPS.items():
         grouped.update(names)
         rows = [(name, lowered[name]) for name in names if name in lowered]
         if rows:
-            print(f"{group}:")
+            log.info(f"{group}:")
             for name, value in rows:
-                print(f"  {name}: {value}")
+                log.info(f"  {name}: {value}")
     others = sorted((k, v) for k, v in lowered.items() if k not in grouped)
     if others:
-        print("etc")
+        log.info("etc")
         for name, value in others:
-            print(f"  {name}: {value}")
+            log.info(f"  {name}: {value}")
 
 
 def report_result(payload, args):
@@ -185,7 +187,8 @@ def main():
     client = build_client(check_endpoint(args.endpoint), args.api_key, args.token_scope)
 
     try:
-        print("\n=== Request ===")
+        log.info("")
+        log.info("=== Request ===")
         raw = call(client, args)
     except openai.APIStatusError as exc:
         dump_headers("Response", exc.status_code, exc.response.headers)

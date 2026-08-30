@@ -234,13 +234,14 @@ python foundry-model-deploy-basic.py \
   --endpoint https://<foundry-resource-subdomain>.openai.azure.com/openai/v1/ \
   --deployment gpt-image-2 \
   --api images.generate
+  --prompt "현대 인디 만화 스타일의 만화책 한 페이지"
 
 # 생성한 이미지를 편집 — 저장 경로를 직접 지정
 python foundry-model-deploy-basic.py \
   --endpoint https://<foundry-resource-subdomain>.openai.azure.com/openai/v1/ \
   --deployment gpt-image-2 \
   --api images.edit \
-  --image ./output-images-generate.png \
+  --image ./images/input.jpg \
   --prompt "add a red scarf" \
   --output-image ./scarf.png
 
@@ -263,7 +264,7 @@ python foundry-model-deploy-basic.py \
 | `x-ratelimit-reset-requests` | O | - | 요청 한도가 리셋되기까지 남은 시간 |
 | `x-ratelimit-reset-tokens` | O | - | 토큰 한도가 리셋되기까지 남은 시간 |
 | `retry-after` | O | O | 초 단위 대기 시간 |
-| `retry-after-ms` | O | O | 밀리초 단위 대기 시간. 더 정밀하므로 우선 사용 |
+| `retry-after-ms` | O | O | 밀리초 단위 대기 시간. **더 정밀하므로 우선 사용** |
 | `x-ms-deployment-name` | O | O | 실제로 요청을 처리한 배포 이름. spillover 가 발생하면 요청 모델 배포 이름과 다르다 |
 | `x-ms-spillover-from-deployment` | S | - | spillover 시킨 모델 배포 이름 |
 | `x-ms-spillover-error` | S | - | spillover 시킨 모델 배포의 HTTP Status code |
@@ -271,7 +272,7 @@ python foundry-model-deploy-basic.py \
 
 ### 3.2 `foundry-model-ptu-deploy-429-retry.py`
 
-PTU 배포가 돌려준 429 를 클라이언트에서 재시도하는 흐름을 다룬다. PTU 는 사용률이 100% 에 닿으면 요청을 큐잉하지 않고 즉시 429 를 돌려주며, 응답 헤더의 `retry-after` ・ `retry-after-ms` 로 다시 요청할 시점을 알려준다.
+PTU 배포가 돌려준 429 를 클라이언트에서 재시도하는 흐름을 다룬다. PTU 는 사용률이 100% 에 닿으면 요청을 큐잉하지 않고 즉시 429 를 돌려주며, 응답 헤더의 `retry-after-ms` 로 다시 요청할 시점을 알려준다.
 
 ```mermaid
 sequenceDiagram
@@ -286,8 +287,8 @@ sequenceDiagram
     Client->>EP: 추론 요청<br/>Authorization: Bearer / model = 배포 이름
     EP->>Deployment: Model deployment로 라우팅
     Deployment-->>EP: Status code=429 (Too Many Requests)
-    EP-->>Client: Status code=429<br/>+ 응답 헤더 retry-after ・ retry-after-ms
-    Note over Client: 응답 헤더의 retry-after ・ retry-after-ms<br/>만큼 대기, 없으면 백오프
+    EP-->>Client: Status code=429<br/>+ 응답 헤더 retry-after-ms
+    Note over Client: 응답 헤더의 retry-after-ms<br/>만큼 대기, 없으면 백오프
     Note over Deployment: 클라이언트가 대기하는 동안<br/>Utilization 이 100% 이하로 떨어짐
     Client->>EP: 동일 요청 재시도
     EP->>Deployment: Model deployment로 라우팅
@@ -317,11 +318,11 @@ python foundry-model-ptu-deploy-429-retry.py \
   --burst 20 --max-attempts 6
 ```
 
-응답 헤더는 [3.1.1](#311-응답-헤더-정보) 표에서 다룬다. `--api chat.completions` 인 경우, `--max-tokens` 로 지정한 값이 PTU [사용률 추정](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/provisioned-get-started)에 고려된다. 실제 생성량보다 `--max-tokens` 을 크게 잡으면 utilization 이 과도하게 증가하여 동시 처리량이 줄어든다. 단, 이미지 모델(`images.*`)은 이 파라미터를 받지 않는다. `retry-after` ・ `retry-after-ms` 가 있으면 그 값을, 없으면 지수 백오프(1s → 2s → 4s …, 상한 30s)를 쓴다.
+응답 헤더는 [3.1.1](#311-응답-헤더-정보) 표에서 다룬다. `--api chat.completions` 인 경우, `--max-tokens` 로 지정한 값이 PTU [사용률 추정](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/provisioned-get-started)에 고려된다. 실제 생성량보다 `--max-tokens` 을 크게 잡으면 utilization 이 과도하게 증가하여 동시 처리량이 줄어든다. 단, 이미지 모델(`images.*`)은 이 파라미터를 받지 않는다. `retry-after-ms` 가 있으면 그 값을, 없으면 지수 백오프(1s → 2s → 4s …, 상한 30s)를 쓴다.
 
 #### 3.2.1 openai SDK 의 `max_retries` 고려
 
-openai SDK 는 408/409/429/5xx HTTP status code 와 함께 전달된 `retry-after` ・ `retry-after-ms` 값을 고려하여 총 2회 재시도한다. Python 코드는 응답 헤더를 직접 보여주기 위해 `max_retries=0` 으로 설정하였다. 클라이언트에서 직접 `retry-after` ・ `retry-after-ms` 을 처리하지 않고자 한다면 `max_retries>=1` 으로 설정한다.
+openai SDK 는 408/409/429/5xx HTTP status code 와 함께 전달된 `retry-after-ms` 값을 고려하여 총 2회 재시도한다. Python 코드는 응답 헤더를 직접 보여주기 위해 `max_retries=0` 으로 설정하였다. 클라이언트에서 직접 `retry-after-ms` 을 처리하지 않고자 한다면 `max_retries>=1` 으로 설정한다.
 
 ```python
 OpenAI(...).with_options(max_retries=5).chat.completions.create(...)
@@ -401,7 +402,7 @@ sequenceDiagram
     participant STD as Standard<br/>Model Deployment
 
     Client->>PTU: 추론 요청
-    PTU-->>Client: Not OK + 응답 헤더 retry-after ・ retry-after-ms
+    PTU-->>Client: Not OK + 응답 헤더 retry-after-ms
     Note over Client: Not OK 이면 spillover
     Client->>STD: 추론 요청 spillover
     STD-->>Client: 200 OK

@@ -1,20 +1,4 @@
 #!/usr/bin/env python3
-"""PTU 가 429 를 돌려줄 때 Standard(PayGo) 배포로 넘기는 두 가지 방식.
-
-client  앱이 직접 넘긴다. PTU 가 200 이 아닌 응답을 돌려주면 상태 코드를
-        가리지 않고 곧바로 표준 배포로 같은 요청을 다시 보낸다.
-header  x-ms-spillover-deployment 헤더로 Foundry 에 위임한다. 왕복이 한 번이라
-        지연이 가장 적다. 응답에 x-ms-spillover-from-deployment 가 실려 온다.
-
-배포 속성 spilloverDeploymentName 이 이미 설정돼 있으면 배포 설정이 우선하고
-header 방식은 무시된다.
-
-    python foundry-model-ptu-deploy-429-spillover.py \\
-        --endpoint https://<foundry-resource-subdomain>.openai.azure.com/openai/v1/ \\
-        --deployment gpt-image-2 \\
-        --spillover-deployment gpt-image-2-paygo \\
-        --spillover-mode header
-"""
 
 import argparse
 import logging
@@ -153,21 +137,21 @@ def call(client, deployment, args, extra_headers=None):
 
 def dump_headers(title, status, headers):
     """응답 헤더를 그룹으로 나눠 출력한다. 분류에 없는 헤더는 etc 로 함께 찍는다."""
-    print(f"\n=== {title} | HTTP {status} ===")
+    log.info(f"\n=== {title} | HTTP {status} ===")
     lowered = {key.lower(): value for key, value in headers.items()}
     grouped = set()
     for group, names in HEADER_GROUPS.items():
         grouped.update(names)
         rows = [(name, lowered[name]) for name in names if name in lowered]
         if rows:
-            print(f"{group}:")
+            log.info(f"{group}:")
             for name, value in rows:
-                print(f"  {name}: {value}")
+                log.info(f"  {name}: {value}")
     others = sorted((k, v) for k, v in lowered.items() if k not in grouped)
     if others:
-        print("etc")
+        log.info("etc")
         for name, value in others:
-            print(f"  {name}: {value}")
+            log.info(f"  {name}: {value}")
 
 
 def report_spillover(headers):
@@ -188,7 +172,7 @@ def report_spillover(headers):
 def run_standard_fallback(client, args):
     """표준 배포로 같은 요청을 다시 보낸다. 클라이언트는 그대로 재사용한다."""
     try:
-        print("\n=== Request | 2차 Standard ===")
+        log.info("\n=== Request | 2차 Standard ===")
         fallback = call(client, args.spillover_deployment, args)
     except openai.APIStatusError as exc:
         dump_headers("Response | 2차 Standard", exc.status_code, exc.response.headers)
@@ -212,7 +196,7 @@ def run_client_spillover(endpoint, args):
     client = build_client(endpoint, args.api_key, args.token_scope)
 
     try:
-        print("\n=== Request | 1차 PTU ===")
+        log.info("\n=== Request | 1차 PTU ===")
         raw = call(client, args.deployment, args)
     except openai.APIStatusError as exc:
         dump_headers("Response | 1차 PTU", exc.status_code, exc.response.headers)
@@ -240,7 +224,7 @@ def run_deployment_spillover(ptu_endpoint, args):
     """
     client = build_client(ptu_endpoint, args.api_key, args.token_scope)
     try:
-        print("\n=== Request | PTU ===")
+        log.info("\n=== Request | PTU ===")
         raw = call(client, args.deployment, args)
     except openai.APIStatusError as exc:
         dump_headers("Response | PTU", exc.status_code, exc.response.headers)
@@ -263,7 +247,7 @@ def run_header_spillover(ptu_endpoint, args):
     label = f"{SPILLOVER_HEADER}: {args.spillover_deployment}"
 
     try:
-        print(f"\n=== Request | {label} ===")
+        log.info(f"\n=== Request | {label} ===")
         raw = call(client, args.deployment, args,
                    extra_headers={SPILLOVER_HEADER: args.spillover_deployment})
     except openai.APIStatusError as exc:

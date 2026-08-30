@@ -1,15 +1,4 @@
 #!/usr/bin/env python3
-"""PTU 가 돌려준 429 를 retry-after 헤더에 맞춰 재시도한다.
-
-PTU 는 사용률이 100% 에 닿으면 큐잉하지 않고 즉시 429 를 돌려주며,
-retry-after-ms / retry-after 로 다시 올 시점을 알려준다. 그 값을 우선 쓰고,
-헤더가 없을 때만 지수 백오프로 폴백한다.
-
-    python foundry-model-ptu-deploy-429-retry.py \\
-        --endpoint https://<foundry-resource-subdomain>.openai.azure.com/openai/v1/ \\
-        --deployment gpt-image-2 \\
-        --burst 20 --max-attempts 6
-"""
 
 import argparse
 import logging
@@ -172,21 +161,21 @@ def call(client, deployment, args):
 
 def dump_headers(title, status, headers):
     """응답 헤더를 그룹으로 나눠 출력한다. 분류에 없는 헤더는 etc 로 함께 찍는다."""
-    print(f"\n=== {title} | HTTP {status} ===")
+    log.info(f"\n=== {title} | HTTP {status} ===")
     lowered = {key.lower(): value for key, value in headers.items()}
     grouped = set()
     for group, names in HEADER_GROUPS.items():
         grouped.update(names)
         rows = [(name, lowered[name]) for name in names if name in lowered]
         if rows:
-            print(f"{group}:")
+            log.info(f"{group}:")
             for name, value in rows:
-                print(f"  {name}: {value}")
+                log.info(f"  {name}: {value}")
     others = sorted((k, v) for k, v in lowered.items() if k not in grouped)
     if others:
-        print("etc")
+        log.info("etc")
         for name, value in others:
-            print(f"  {name}: {value}")
+            log.info(f"  {name}: {value}")
 
 
 def retry_after_seconds(headers):
@@ -222,7 +211,7 @@ def run_worker(worker_id, client, args):
         attempt = attempt_index + 1
         label = f"worker {worker_id} 시도 {attempt}"
         try:
-            print(f"\n=== Request | {label} ===")
+            log.info(f"\n=== Request | {label} ===")
             raw = call(client, args.deployment, args)
         except openai.APIStatusError as exc:
             dump_headers(f"Response | {label}", exc.status_code, exc.response.headers)
