@@ -338,11 +338,12 @@ PTU 모델 배포가 429 HTTP status code 으로 반환할 경우 다른 모델 
 | `--api` | | `images.generate` | `images.generate` \| `chat.completions` |
 | `--auth` | | `entra-id` | `entra-id` \| `entra-id=<스코프>` \| `api-key=<키>` |
 | `--prompt` | | | 프롬프트 |
-| `--spillover-mode` | |  | 미지정시, PTU 모델 배포 속성 따름<br/>`header` = `x-ms-spillover-deployment` 헤더로 서비스에 전환을 위임<br/>`client` = 클라이언트가 429 를 받고 직접 Standard 배포로 재요청 |
+| `--spillover-mode` | |  | 미지정시, [PTU 모델 배포 속성](#331-ptu-모델-배포-속성으로-spillover-처리)에 따라 spillover 처리<br/>`header` 설정시, [Foundry project 서비스](#332-foundry-project-서비스에서-spillover-처리)에서 spillover 처리 <br/>`client` 설정시, [클라이언트](#333-클라이언트에서-spillover-처리)에서 spillover 처리 |
 
 응답 헤더는 [3.1.1](#311-응답-헤더-정보) 표에서 `PTU` 에 해당하는 값만 다룬다.
 
-#### 3.3.1. PTU 모델 배포 속성
+
+#### 3.3.1. PTU 모델 배포 속성으로 spillover 처리
 
 PTU 모델 배포에 [2.4](#24-상세-설정하여-모델-배포하기) 의 [Traffic spillover] 로 지정된 모델 배포로 spillover 를 수행한다.
 
@@ -352,30 +353,25 @@ python foundry-model-ptu-deploy-429-spillover.py \
   --deployment gpt-image-2
 ```
 
-#### 3.3.2. 서비스 측 spillover — 요청 헤더
+#### 3.3.2. Foundry project 서비스에서 spillover 처리
 
-요청에 `x-ms-spillover-deployment` 헤더를 붙여 전환을 Foundry 에 맡긴다. PTU 가 실패하면 서비스가 내부에서 Standard 배포로 넘기고 최종 결과만 돌려준다.
-
-- 클라이언트 왕복이 한 번이라 지연이 가장 적다
-- 헤더를 붙인 요청에만 적용되므로 워크로드별로 켜고 끌 수 있다
-- 전환은 한 번만 일어난다. 넘겨받은 Standard 배포가 다시 다른 곳으로 넘기지는 않는다
-- 전환 여부가 `x-ms-spillover-from-deployment` / `x-ms-spillover-error` 헤더로 응답에 실린다
+클라이언트에서 요청 헤더에 spillover 될 모델 배포를 `x-ms-spillover-deployment` 로 지정한다. PTU 가 실패하면 Foundry project 서비스에서 spillover 될 모델 배포로 요청을 전달한다.
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant Client as 클라이언트<br/>(openai SDK)
-    participant EP as Foundry project<br/>엔드포인트
-    participant PTU as PTU 배포
-    participant STD as Standard 배포
+    participant EP as Foundry project<br/>서비스
+    participant PTU as PTU Model<br/>Deployment
+    participant STD as Standard Model<br/>Deployment
 
-    Client->>EP: 추론 요청<br/>x-ms-spillover-deployment: <standard 배포 이름>
-    EP->>PTU: PTU 우선 라우팅
-    PTU-->>EP: 429 (PTU 소진)
-    Note over EP: spilloverDeploymentName 또는<br/>요청 헤더가 있으면 자동 전환
-    EP->>STD: 동일 요청 재전달
+    Client->>EP: 추론 요청<br/>x-ms-spillover-deployment: <Standard Model Deployment 이름>
+    EP->>PTU: PTU Model Deployment 로 라우팅
+    PTU-->>EP: Status code=429 (Too Many Requests)
+    Note over EP: spillover 발생
+    EP->>STD: Standard Model Deployment 로 라우팅
     STD-->>EP: 200 OK
-    EP-->>Client: 200 OK<br/>x-ms-deployment-name / x-ms-spillover-from-deployment / x-ms-spillover-error
+    EP-->>Client: 200 OK<br/>+ 응답 헤더 x-ms-deployment-name ・ x-ms-spillover-from-deployment ・ x-ms-spillover-error
 ```
 
 ```bash
@@ -386,13 +382,13 @@ python foundry-model-ptu-deploy-429-spillover.py \
   --spillover-mode header
 ```
 
-Standard 배포마저 실패하면 Standard 배포의 상태 코드와 본문이 그대로 반환된다. 이때도 `x-ms-spillover-from-deployment` 와 `x-ms-spillover-error` 는 남아 있어 spillover 실패와 Standard 배포 직접 실패를 구분할 수 있다.
+본 방법은 클라이언트 - 서비스간 왕복이 1번 발생하여 latency 를 줄인다. 요청 헤더에 `x-ms-spillover-deployment` 을 붙인 요청에만 적용되므로, 워크로드별 최적화가 가능하다. Standard 모델 배포마저 실패하면 Standard 모델 배포의 상태 코드와 본문이 그대로 반환된다. 이때도 `x-ms-spillover-from-deployment` 와 `x-ms-spillover-error` 는 남아 있어 spillover 실패와 Standard 모델 배포 직접 실패를 구분할 수 있다.
 
-#### 3.3.3. 클라이언트 측 spillover
+#### 3.3.3. 클라이언트에서 spillover 처리
 
-클라이언트가 PTU 배포의 응답을 보고 직접 전환한다. 상태 코드가 `400` / `429` / `500` / `503` 이면 `retry-after` 를 기다리지 않고 곧바로 Standard 배포로 같은 요청을 다시 보낸다.
+클라이언트가 PTU 배포의 응답을 보고 직접 전환한다. **200 이 아닌 응답이면 상태 코드를 가리지 않고** `retry-after` 를 기다리지 않은 채 곧바로 Standard 배포로 같은 요청을 다시 보낸다.
 
-- 전환 조건과 대상을 앱이 정한다. 어떤 상태 코드에서 넘길지, 몇 번 시도할지를 코드로 바꿀 수 있다
+- 전환 조건과 대상을 앱이 정한다. 특정 상태 코드에서만 넘기도록 좁히는 것도 코드에서 바꾸면 된다
 - 대상을 앱이 고르므로 **다른 리소스·다른 리전**의 배포로도 넘길 수 있다. 이 스크립트는 단순화를 위해 `--endpoint` 하나만 쓴다
 - 요청이 두 번 나가므로 전환이 일어난 요청의 지연은 서비스 측보다 크다
 - 서비스가 관여하지 않으므로 응답에 `x-ms-spillover-*` 헤더가 붙지 않는다. 어느 배포가 처리했는지는 `x-ms-deployment-name` 으로 확인한다

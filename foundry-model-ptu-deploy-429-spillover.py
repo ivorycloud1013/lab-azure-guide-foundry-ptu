@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """PTU 가 429 를 돌려줄 때 Standard(PayGo) 배포로 넘기는 두 가지 방식.
 
-client  기본값. 앱이 직접 넘긴다. PTU 가 400/429/500/503 을 돌려주면 기다리지
-        않고 곧바로 표준 배포로 같은 요청을 다시 보낸다. 표준 배포가 다른
-        리소스·리전에 있어도 되고 전환 조건을 앱이 통제한다.
+client  앱이 직접 넘긴다. PTU 가 200 이 아닌 응답을 돌려주면 상태 코드를
+        가리지 않고 곧바로 표준 배포로 같은 요청을 다시 보낸다.
 header  x-ms-spillover-deployment 헤더로 Foundry 에 위임한다. 왕복이 한 번이라
         지연이 가장 적다. 응답에 x-ms-spillover-from-deployment 가 실려 온다.
 
@@ -44,8 +43,6 @@ API_CHAT_COMPLETIONS = "chat.completions"
 # 서비스 측 per-request 스필오버를 요청하는 헤더.
 SPILLOVER_HEADER = "x-ms-spillover-deployment"
 
-# 스필오버를 유발하는 상태 코드. 429 는 PTU 소진, 400 은 롱컨텍스트, 500/503 은 서버 오류.
-SPILLOVER_CODES = frozenset({400, 429, 500, 503})
 
 HEADER_GROUPS = {
     "throttling": (
@@ -191,10 +188,7 @@ def run_client_spillover(endpoint, args):
     except openai.APIStatusError as exc:
         dump_headers("1차 PTU", exc.status_code, exc.response.headers)
 
-        if exc.status_code not in SPILLOVER_CODES:
-            log.error("HTTP %s 는 스필오버 대상이 아니다", exc.status_code)
-            return False
-
+        # 상태 코드를 가리지 않는다. 200 이 아니면 곧바로 넘긴다.
         log.warning("PTU 가 HTTP %s -> 대기 없이 %s 로 전환",
                     exc.status_code, args.spillover_deployment)
         spillover_client = build_client(endpoint, args.api_key, args.token_scope)
