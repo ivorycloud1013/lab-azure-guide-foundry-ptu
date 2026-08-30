@@ -194,12 +194,27 @@ Python 코드들에 대한 실행 환경은 다음과 같다.
 
 Entra ID 인증을 위해서는 실행 환경에서 `az login` 이 완료된 상태여야 한다.
 
-
 ### 3.1 `foundry-model-deploy-basic.py`
 
-Microsoft Foundry 에 배포된 모델 엔드포인트에 대한 추론 요청을 다룬다.
+Microsoft Foundry 에 배포된 모델 엔드포인트에 대한 클라이언트의 추론 요청을 다룬다. 클라이언트가 Azure 와 인증을 완료하고 foundry 의 모델 배포 엔드포인트를 호출하여 응답을 처리하는 흐름은 아래와 같다.
 
-**Arguments**
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client as 클라이언트<br/>(openai SDK)
+    participant Entra as Microsoft Entra ID
+    participant EP as Foundry project<br/>엔드포인트
+    participant Deployment as Model deployment<br/>엔드포인트
+
+    Client->>Entra: Authentication
+    Entra-->>Client: Bearer token — 만료 시 자동 갱신
+    Client->>EP: 추론 요청<br/>Authorization: Bearer / model = 배포 이름
+    EP->>Deployment: Model deployment로 라우팅
+    Deployment-->>EP: 200 OK
+    EP-->>Client: 200 OK
+```
+
+Python 코드의 입력 매개변수에 대한 설명은 아래와 같다.
 
 | Arguments | Required | Default | Description |
 |---|---|---|---|
@@ -238,61 +253,33 @@ python foundry-model-deploy-basic.py \
 - `x-ms-spillover-from-deployment` 가 있는가 → **배포 속성 스필오버가 동작 중**
 - 스크립트가 위 두 헤더를 읽어 스필오버 발생 여부를 한 줄 로그로 정리해 준다
 
-애플리케이션이 Entra ID 로 토큰을 받아 Foundry 엔드포인트를 호출하고, 요청이 PTU 배포로 라우팅되기까지의 흐름이다.
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant App as 애플리케이션<br/>(openai SDK v1)
-    participant Entra as Microsoft Entra ID
-    participant EP as Foundry 엔드포인트<br/>/openai/v1/
-    participant PTU as gpt-image-2<br/>Global Provisioned · 100 PTU
-    participant STD as gpt-image-2-paygo<br/>Global Standard (PayGo)
-    participant Mon as Azure Monitor
-
-    App->>Entra: 토큰 요청 (DefaultAzureCredential)<br/>scope: https://ai.azure.com/.default
-    Entra-->>App: Bearer 토큰 — 만료 시 자동 갱신
-    App->>EP: 추론 요청<br/>Authorization: Bearer / model = 배포 이름
-    EP->>PTU: 배포로 라우팅 (Guardrails: DefaultV2)
-    PTU-->>EP: 200 OK
-    EP-->>App: 200 OK + 응답 헤더<br/>x-ms-deployment-name / x-ratelimit-* / retry-after*
-    Note over PTU,STD: PTU 사용률이 100% 면 429 를 반환한다.<br/>spilloverDeploymentName 이 설정돼 있으면 STD 로 넘어간다 (3.4)
-    PTU--)Mon: Provisioned-managed utilization V2
-    STD--)Mon: Azure OpenAI Requests (IsSpillover)
-```
-
 ### 3.2 응답 헤더 읽기
 
-샘플 스크립트는 응답 헤더를 아래 세 그룹으로 나눠 출력하고, 분류에 없는 헤더도 `[기타]` 로 함께 찍는다.
+샘플 스크립트는 응답 헤더를 전부 출력한다. 아래는 그중 눈여겨볼 헤더이며, `Standard` 와 `PTU` 열은
+**응답을 최종적으로 처리한 배포** 기준이다.
 
-**스로틀링 / 재시도**
+- `O` 해당 배포의 응답에 실린다
+- `-` 실리지 않거나 의미가 없다
+- `S` spillover 로 넘어온 요청에만 실린다
 
-| 헤더 | 의미 |
-|---|---|
-| `retry-after-ms` | **밀리초 단위 대기 시간.** 더 정밀하므로 우선 사용 |
-| `retry-after` | 초 단위 대기 시간 |
-| `x-ratelimit-remaining-requests` | 남은 요청 수 |
-| `x-ratelimit-remaining-tokens` | 남은 토큰 수 |
-| `x-ratelimit-limit-requests` / `-tokens` | 한도 |
-| `x-ratelimit-reset-requests` / `-tokens` | 한도 리셋까지 남은 시간 |
+| 헤더 | Standard | PTU | 의미 |
+|---|:---:|:---:|---|
+| `retry-after` | O | O | 초 단위 대기 시간 |
+| `retry-after-ms` | O | O | **밀리초 단위 대기 시간.** 더 정밀하므로 우선 사용 |
+| `x-ratelimit-limit-requests` / `-tokens` | O | - | 분당 요청·토큰 한도(RPM/TPM) |
+| `x-ratelimit-remaining-requests` / `-tokens` | O | - | 남은 요청·토큰 |
+| `x-ratelimit-reset-requests` / `-tokens` | O | - | 한도 리셋까지 남은 시간 |
+| `x-ms-deployment-name` | O | O | **실제로 요청을 처리한 배포 이름** |
+| `x-ms-spillover-from-deployment` | S | - | **존재 자체가 spillover 됐다는 뜻.** 값은 원래의 PTU 배포 이름 |
+| `x-ms-spillover-error` | S | - | spillover 를 유발한 PTU 쪽 원본 상태 코드 (429 / 500 / 503) |
+| `apim-request-id`, `x-request-id`, `x-ms-request-id`, `x-ms-client-request-id`, `x-ms-region`, `azureml-model-session`, `openai-processing-ms`, `openai-model`, `x-envoy-upstream-service-time` | O | O | 추적·진단용. 지원 티켓에는 `apim-request-id` 또는 `x-request-id` 를 함께 제출한다 |
 
-> PTU 배포는 429 와 함께 `retry-after` **와** `retry-after-ms` 를 모두 돌려준다. 임의의 지수 백오프보다 이 값을 쓰는 편이 정확하다 — 버킷이 언제 비는지는 서비스만 알기 때문이다.
+두 배포 유형의 스로틀링 방식이 다르기 때문에 열이 갈린다. Standard 는 RPM/TPM 쿼터로 제어되므로
+`x-ratelimit-*` 로 잔량을 알 수 있다. PTU 는 쿼터가 아니라 사용률(leaky bucket)로 제어되므로
+잔량 헤더 대신 100% 도달 시점의 `retry-after*` 가 유일한 신호다.
 
-**스필오버**
-
-| 헤더 | 의미 |
-|---|---|
-| `x-ms-deployment-name` | **실제로 요청을 처리한 배포 이름.** 스필오버됐다면 표준 배포 이름이 들어온다 |
-| `x-ms-spillover-from-deployment` | **존재 자체가 스필오버됐다는 뜻.** 값은 원래의 PTU 배포 이름 |
-| `x-ms-spillover-error` | 스필오버를 유발한 PTU 쪽 원본 상태 코드 (429 / 500 / 503 등). 스필오버 성공 여부와 무관하게 항상 붙는다 |
-
-`foundry-model-deploy-basic.py` 는 이 세 헤더만 보고 **서비스 측 스필오버가 실제로 일어났는지** 판정한다.
-
-**추적 / 진단**
-
-`apim-request-id`, `x-request-id`, `x-ms-request-id`, `x-ms-client-request-id`, `x-ms-region`, `azureml-model-session`, `openai-processing-ms`, `openai-model`, `x-envoy-upstream-service-time`
-
-지원 티켓을 열 때는 `apim-request-id` 또는 `x-request-id` 를 함께 제출한다.
+`foundry-model-deploy-basic.py` 는 `x-ms-deployment-name` 과 `x-ms-spillover-from-deployment` 두 헤더로
+**서비스 측 spillover 가 실제로 일어났는지** 판정한다.
 
 ### 3.3 429 재시도 — `foundry-model-ptu-deploy-429-retry.py`
 
