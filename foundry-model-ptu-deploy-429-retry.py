@@ -13,6 +13,7 @@ retry-after-ms / retry-after 로 다시 올 시점을 알려준다. 그 값을 �
 
 import argparse
 import logging
+import os
 import random
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -36,7 +37,9 @@ IMAGE_SIZE = "1024x1024"
 MAX_OUTPUT_TOKENS = 256
 
 API_IMAGES_GENERATE = "images.generate"
+API_IMAGES_EDIT = "images.edit"
 API_CHAT_COMPLETIONS = "chat.completions"
+IMAGE_APIS = (API_IMAGES_GENERATE, API_IMAGES_EDIT)
 
 # 재시도 대상 상태 코드. 그 외에는 즉시 중단한다.
 RETRYABLE = frozenset({408, 429, 500, 502, 503, 504})
@@ -100,10 +103,11 @@ def parse_args():
     parser.add_argument("--auth", default=AUTH_ENTRA_ID, metavar="METHOD",
                         help=f"{AUTH_ENTRA_ID} (기본) | {AUTH_ENTRA_ID}=<스코프> | api-key=<키>")
     parser.add_argument("--api",
-                        choices=(API_IMAGES_GENERATE, API_CHAT_COMPLETIONS),
+                        choices=(API_IMAGES_GENERATE, API_IMAGES_EDIT, API_CHAT_COMPLETIONS),
                         default=API_IMAGES_GENERATE,
                         help=f"호출할 API (기본 {API_IMAGES_GENERATE})")
     parser.add_argument("--prompt", help="프롬프트 (기본값은 --api 별로 다름)")
+    parser.add_argument("--image", help="images.edit 의 입력 이미지 경로. images.edit 일 때 필수")
     parser.add_argument("--max-attempts", type=int, default=5,
                         help="요청 하나당 최대 시도 횟수 (기본 5)")
     parser.add_argument("--burst", type=int, default=1,
@@ -111,8 +115,14 @@ def parse_args():
 
     args = parser.parse_args()
     args.api_key, args.token_scope = resolve_auth(args.auth, parser)
+    # images.edit 는 편집 대상 이미지가 있어야 한다.
+    if args.api == API_IMAGES_EDIT:
+        if not args.image:
+            parser.error("--api images.edit 에는 --image 로 입력 이미지를 지정해야 한다")
+        if not os.path.isfile(args.image):
+            parser.error(f"--image 경로에 파일이 없다: {args.image}")
     if not args.prompt:
-        args.prompt = (DEFAULT_IMAGE_PROMPT if args.api == API_IMAGES_GENERATE
+        args.prompt = (DEFAULT_IMAGE_PROMPT if args.api in IMAGE_APIS
                        else DEFAULT_CHAT_PROMPT)
     return args
 
@@ -142,6 +152,11 @@ def call(client, deployment, args):
             messages=[{"role": "user", "content": args.prompt}],
             max_completion_tokens=MAX_OUTPUT_TOKENS,
         )
+    if args.api == API_IMAGES_EDIT:
+        with open(args.image, "rb") as source:
+            return client.images.with_raw_response.edit(
+                model=deployment, image=source, prompt=args.prompt, n=1, size=IMAGE_SIZE,
+            )
     return client.images.with_raw_response.generate(
         model=deployment, prompt=args.prompt, n=1, size=IMAGE_SIZE,
     )

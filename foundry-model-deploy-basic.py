@@ -25,6 +25,7 @@
 import argparse
 import base64
 import logging
+import os
 
 import openai
 from openai import OpenAI
@@ -112,8 +113,11 @@ def parse_args():
     args = parser.parse_args()
     args.api_key, args.token_scope = resolve_auth(args.auth, parser)
     # images.edit 는 편집 대상 이미지가 있어야 한다.
-    if args.api == API_IMAGES_EDIT and not args.image:
-        parser.error("--api images.edit 에는 --image 로 입력 이미지를 지정해야 한다")
+    if args.api == API_IMAGES_EDIT:
+        if not args.image:
+            parser.error("--api images.edit 에는 --image 로 입력 이미지를 지정해야 한다")
+        if not os.path.isfile(args.image):
+            parser.error(f"--image 경로에 파일이 없다: {args.image}")
     if not args.prompt:
         args.prompt = DEFAULT_IMAGE_PROMPT if args.api in IMAGE_APIS else DEFAULT_CHAT_PROMPT
     if args.api in IMAGE_APIS and not args.output_image:

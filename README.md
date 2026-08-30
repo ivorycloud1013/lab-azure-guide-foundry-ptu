@@ -286,16 +286,12 @@ sequenceDiagram
     Deployment-->>EP: Status code=429 (Too Many Requests)
     EP-->>Client: Status code=429 + 응답 헤더 retry-after-ms
     Note over Client: 응답 헤더의 retry-after-ms 만큼 대기,<br/>없으면 백오프
-    Note over Deployment: 대기하는 동안<br/>Utilization 이 100% 이하로 떨어짐
+    Note over Deployment: 클라이언트가 대기하는 동안<br/>Utilization 이 100% 이하로 떨어짐
     Client->>EP: 동일 요청 재시도
     EP->>Deployment: Model deployment로 라우팅
     Deployment-->>EP: 200 OK
     EP-->>Client: 200 OK
 ```
-
-429 가 이어지면 `--max-attempts` 회까지 위 대기와 재전송을 반복한다.
-
-> `max_tokens` 는 PTU 사용률 추정에 그대로 반영된다. 실제 생성량보다 크게 잡으면 사용률이 과하게 차올라 동시 처리량이 줄어든다. ([프로덕션 운영 문서](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/provisioned-get-started))
 
 Python 코드의 입력 매개변수에 대한 설명은 아래와 같다.
 
@@ -303,9 +299,10 @@ Python 코드의 입력 매개변수에 대한 설명은 아래와 같다.
 |---|---|---|---|
 | `--endpoint` | Yes | | 모델 배포 엔드포인트. `/openai/v1/` 까지 포함한 전체 URL |
 | `--ptu-deployment` | Yes | | PTU 배포 이름 |
-| `--api` | | `images.generate` | `images.generate` \| `chat.completions` |
+| `--api` | | `images.generate` | `images.generate` \| `images.edit` \| `chat.completions` |
 | `--auth` | | `entra-id` | `entra-id` \| `entra-id=<스코프>` \| `api-key=<키>` |
 | `--prompt` | | | 프롬프트 |
+| `--image` | | | 편집할 입력 이미지 경로. `images.edit` 일 때 필수 |
 | `--max-attempts` | | `5` | 요청 하나당 최대 시도 횟수 |
 | `--burst` | | `1` | 동시 요청 수. 2 이상이면 429 를 실제로 유발할 수 있다 |
 
@@ -316,6 +313,8 @@ python foundry-model-ptu-deploy-429-retry.py \
   --ptu-deployment gpt-image-2 \
   --burst 20 --max-attempts 6
 ```
+
+`max_tokens` 는 PTU 사용률 추정에 그대로 반영된다. 실제 생성량보다 크게 잡으면 사용률이 과하게 차올라 동시 처리량이 줄어든다. ([프로덕션 운영 문서](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/provisioned-get-started))
 
 `retry-after-ms` 가 있으면 그 값을, 없으면 지수 백오프(1s → 2s → 4s …, 상한 30s)를 쓴다. 동시 요청이 같은 시각에 재차 몰리지 않도록 25% 지터를 더한다. 워커별 시도 횟수와 총 대기 시간이 요약으로 표시된다.
 
