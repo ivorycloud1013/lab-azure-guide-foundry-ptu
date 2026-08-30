@@ -203,27 +203,27 @@ Microsoft Foundry 에 배포된 모델 엔드포인트에 대한 추론 요청�
 
 | Arguments | Required | Default | Description |
 |---|---|---|---|
-| `--endpoint` | Yes | — | 모델 배포 엔드포인트. `/openai/v1/` 까지 포함한 전체 URL |
-| `--deployment` | Yes | — | 모델 배포 이름 |
+| `--endpoint` | Yes | | 모델 배포 엔드포인트. `/openai/v1/` 까지 포함한 전체 URL |
+| `--deployment` | Yes | | 모델 배포 이름 |
 | `--api` | | `images.generate` | `images.generate` \| `images.edit` \| `chat.completions` |
 | `--auth` | | `entra-id` | `entra-id` \| `entra-id=<스코프>` \| `api-key=<키>` |
 | `--prompt` | | `--api` 별 기본값 | 프롬프트 |
-| `--image` | `images.edit` 시 ✅ | — | 편집할 입력 이미지 경로 |
-| `--output` | | (저장 안 함) | `images.*` 결과를 저장할 경로 |
+| `--image` | | | 편집할 입력 이미지 경로 |
+| `--output` | | `./output-<api>.png` | `images.*` 결과를 저장할 경로. `images.generate` 면 `./output-images-generate.png` |
 
 ```bash
 # 이미지 생성
 python foundry-model-deploy-basic.py \
   --endpoint https://minwook-foundry-northce-resource.openai.azure.com/openai/v1/ \
   --deployment gpt-image-2 \
-  --api images.generate --output out.png
+  --api images.generate
 
 # 생성한 이미지를 편집
 python foundry-model-deploy-basic.py \
   --endpoint https://minwook-foundry-northce-resource.openai.azure.com/openai/v1/ \
   --deployment gpt-image-2 \
-  --api images.edit --image out.png \
-  --prompt "add a red scarf" --output edited.png
+  --api images.edit --image ./output-images-generate.png \
+  --prompt "add a red scarf"
 
 # 채팅 완성
 python foundry-model-deploy-basic.py \

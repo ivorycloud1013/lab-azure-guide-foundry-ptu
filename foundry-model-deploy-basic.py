@@ -13,12 +13,13 @@
     python foundry-model-deploy-basic.py \\
         --endpoint https://<resource>.openai.azure.com/openai/v1/ \\
         --deployment gpt-image-2 \\
-        --api images.generate --output out.png
+        --api images.generate            # ./output-images-generate.png 로 저장
 
     python foundry-model-deploy-basic.py \\
         --endpoint https://<resource>.openai.azure.com/openai/v1/ \\
         --deployment gpt-image-2 \\
-        --api images.edit --image out.png --prompt "add a red scarf" --output edited.png
+        --api images.edit --image ./output-images-generate.png \\
+        --prompt "add a red scarf"       # ./output-images-edit.png 로 저장
 """
 
 import argparse
@@ -105,7 +106,8 @@ def parse_args():
                         help=f"{AUTH_ENTRA_ID} (기본) | {AUTH_ENTRA_ID}=<스코프> | api-key=<키>")
     parser.add_argument("--prompt", help="프롬프트 (기본값은 --api 별로 다름)")
     parser.add_argument("--image", help="images.edit 의 입력 이미지 경로. images.edit 일 때 필수")
-    parser.add_argument("--output", help="images.* 결과를 저장할 경로. 생략하면 저장하지 않는다")
+    parser.add_argument("--output",
+                        help="images.* 결과를 저장할 경로 (기본 ./output-<api>.png)")
 
     args = parser.parse_args()
     args.api_key, args.token_scope = resolve_auth(args.auth, parser)
@@ -114,6 +116,8 @@ def parse_args():
         parser.error("--api images.edit 에는 --image 로 입력 이미지를 지정해야 한다")
     if not args.prompt:
         args.prompt = DEFAULT_IMAGE_PROMPT if args.api in IMAGE_APIS else DEFAULT_CHAT_PROMPT
+    if args.api in IMAGE_APIS and not args.output:
+        args.output = f"./output-{args.api.replace('.', '-')}.png"
     return args
 
 
@@ -191,7 +195,7 @@ def report_spillover(headers):
 
 
 def report_result(payload, args):
-    """응답 본문을 요약하고, images.* 는 --output 이 있으면 파일로 저장한다."""
+    """응답 본문을 요약하고, images.* 는 --output 경로에 저장한다."""
     if args.api not in IMAGE_APIS:
         message = payload.choices[0].message.content or ""
         log.info("응답: %s", message.strip().replace("\n", " ")[:160])
