@@ -106,7 +106,7 @@ def parse_args():
                         help=f"{AUTH_ENTRA_ID} (기본) | {AUTH_ENTRA_ID}=<스코프> | api-key=<키>")
     parser.add_argument("--prompt", help="프롬프트 (기본값은 --api 별로 다름)")
     parser.add_argument("--image", help="images.edit 의 입력 이미지 경로. images.edit 일 때 필수")
-    parser.add_argument("--output",
+    parser.add_argument("--output-image",
                         help="images.* 결과를 저장할 경로 (기본 ./output-<api>.png)")
 
     args = parser.parse_args()
@@ -116,8 +116,8 @@ def parse_args():
         parser.error("--api images.edit 에는 --image 로 입력 이미지를 지정해야 한다")
     if not args.prompt:
         args.prompt = DEFAULT_IMAGE_PROMPT if args.api in IMAGE_APIS else DEFAULT_CHAT_PROMPT
-    if args.api in IMAGE_APIS and not args.output:
-        args.output = f"./output-{args.api.replace('.', '-')}.png"
+    if args.api in IMAGE_APIS and not args.output_image:
+        args.output_image = f"./output-{args.api.replace('.', '-')}.png"
     return args
 
 
@@ -195,7 +195,7 @@ def report_spillover(headers):
 
 
 def report_result(payload, args):
-    """응답 본문을 요약하고, images.* 는 --output 경로에 저장한다."""
+    """응답 본문을 요약하고, images.* 는 --output-image 경로에 저장한다."""
     if args.api not in IMAGE_APIS:
         message = payload.choices[0].message.content or ""
         log.info("응답: %s", message.strip().replace("\n", " ")[:160])
@@ -203,10 +203,10 @@ def report_result(payload, args):
 
     image_b64 = payload.data[0].b64_json
     log.info("이미지 %s장 수신 (base64 %s자)", len(payload.data), len(image_b64))
-    if args.output:
-        with open(args.output, "wb") as target:
+    if args.output_image:
+        with open(args.output_image, "wb") as target:
             target.write(base64.b64decode(image_b64))
-        log.info("%s 로 저장했다", args.output)
+        log.info("%s 로 저장했다", args.output_image)
 
 
 def main():

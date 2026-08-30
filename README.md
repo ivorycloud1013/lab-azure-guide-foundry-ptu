@@ -207,9 +207,9 @@ Microsoft Foundry 에 배포된 모델 엔드포인트에 대한 추론 요청�
 | `--deployment` | Yes | | 모델 배포 이름 |
 | `--api` | | `images.generate` | `images.generate` \| `images.edit` \| `chat.completions` |
 | `--auth` | | `entra-id` | `entra-id` \| `entra-id=<스코프>` \| `api-key=<키>` |
-| `--prompt` | | `--api` 별 기본값 | 프롬프트 |
+| `--prompt` | | | 프롬프트 |
 | `--image` | | | 편집할 입력 이미지 경로 |
-| `--output` | | `./output-<api>.png` | `images.*` 결과를 저장할 경로. `images.generate` 면 `./output-images-generate.png` |
+| `--output-image` | | `./output-<api>.png` | `images.*` 결과를 저장할 경로. `images.generate` 면 `./output-images-generate.png` |
 
 ```bash
 # 이미지 생성
