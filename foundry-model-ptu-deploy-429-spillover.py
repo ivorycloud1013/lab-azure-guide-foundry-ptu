@@ -22,7 +22,7 @@ import logging
 import openai
 from openai import OpenAI
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 log = logging.getLogger("spillover")
 
 DEFAULT_TOKEN_SCOPE = "https://ai.azure.com/.default"
@@ -160,12 +160,12 @@ def dump_headers(title, status, headers):
         grouped.update(names)
         rows = [(name, lowered[name]) for name in names if name in lowered]
         if rows:
-            print(f"[{group}]")
+            print(f"{group}:")
             for name, value in rows:
                 print(f"  {name}: {value}")
     others = sorted((k, v) for k, v in lowered.items() if k not in grouped)
     if others:
-        print("[etc]")
+        print("etc")
         for name, value in others:
             print(f"  {name}: {value}")
 
@@ -188,16 +188,17 @@ def report_spillover(headers):
 def run_standard_fallback(client, args):
     """표준 배포로 같은 요청을 다시 보낸다. 클라이언트는 그대로 재사용한다."""
     try:
+        print("\n=== Request | 2차 Standard ===")
         fallback = call(client, args.spillover_deployment, args)
     except openai.APIStatusError as exc:
-        dump_headers("2차 Standard", exc.status_code, exc.response.headers)
+        dump_headers("Response | 2차 Standard", exc.status_code, exc.response.headers)
         log.error("표준 배포도 실패: HTTP %s", exc.status_code)
         return False
     except openai.APIConnectionError as exc:
         log.error("표준 배포 연결 실패: %s", type(exc).__name__)
         return False
 
-    dump_headers("2차 Standard", fallback.http_response.status_code, fallback.headers)
+    dump_headers("Response | 2차 Standard", fallback.http_response.status_code, fallback.headers)
     log.info("표준 배포 %s 가 처리 완료", args.spillover_deployment)
     return True
 
@@ -211,9 +212,10 @@ def run_client_spillover(endpoint, args):
     client = build_client(endpoint, args.api_key, args.token_scope)
 
     try:
+        print("\n=== Request | 1차 PTU ===")
         raw = call(client, args.deployment, args)
     except openai.APIStatusError as exc:
-        dump_headers("1차 PTU", exc.status_code, exc.response.headers)
+        dump_headers("Response | 1차 PTU", exc.status_code, exc.response.headers)
 
         # 상태 코드를 가리지 않는다. 200 이 아니면 곧바로 넘긴다.
         log.warning("PTU 가 HTTP %s -> 대기 없이 %s 로 전환",
@@ -225,7 +227,7 @@ def run_client_spillover(endpoint, args):
                     type(exc).__name__, args.spillover_deployment)
         return run_standard_fallback(client, args)
 
-    dump_headers("1차 PTU", raw.http_response.status_code, raw.headers)
+    dump_headers("Response | 1차 PTU", raw.http_response.status_code, raw.headers)
     log.info("PTU 가 정상 처리 -> 스필오버 불필요")
     return True
 
@@ -238,9 +240,10 @@ def run_deployment_spillover(ptu_endpoint, args):
     """
     client = build_client(ptu_endpoint, args.api_key, args.token_scope)
     try:
+        print("\n=== Request | PTU ===")
         raw = call(client, args.deployment, args)
     except openai.APIStatusError as exc:
-        dump_headers("PTU 응답", exc.status_code, exc.response.headers)
+        dump_headers("Response | PTU", exc.status_code, exc.response.headers)
         log.error("호출 실패: HTTP %s", exc.status_code)
         if exc.status_code == 429:
             log.error("배포에 spilloverDeploymentName 이 없거나 Standard 배포도 처리하지 못했다")
@@ -249,7 +252,7 @@ def run_deployment_spillover(ptu_endpoint, args):
         log.error("PTU 연결 실패: %s", type(exc).__name__)
         return False
 
-    dump_headers("PTU 응답", raw.http_response.status_code, raw.headers)
+    dump_headers("Response | PTU", raw.http_response.status_code, raw.headers)
     report_spillover(raw.headers)
     return True
 
@@ -257,20 +260,21 @@ def run_deployment_spillover(ptu_endpoint, args):
 def run_header_spillover(ptu_endpoint, args):
     """x-ms-spillover-deployment 헤더를 붙여 서비스가 넘기게 한다."""
     client = build_client(ptu_endpoint, args.api_key, args.token_scope)
-    title = f"{SPILLOVER_HEADER}: {args.spillover_deployment}"
+    label = f"{SPILLOVER_HEADER}: {args.spillover_deployment}"
 
     try:
+        print(f"\n=== Request | {label} ===")
         raw = call(client, args.deployment, args,
                    extra_headers={SPILLOVER_HEADER: args.spillover_deployment})
     except openai.APIStatusError as exc:
-        dump_headers(title, exc.status_code, exc.response.headers)
+        dump_headers(f"Response | {label}", exc.status_code, exc.response.headers)
         log.error("스필오버 후에도 실패: HTTP %s", exc.status_code)
         return False
     except openai.APIConnectionError as exc:
         log.error("연결 실패: %s", type(exc).__name__)
         return False
 
-    dump_headers(title, raw.http_response.status_code, raw.headers)
+    dump_headers(f"Response | {label}", raw.http_response.status_code, raw.headers)
     report_spillover(raw.headers)
     return True
 

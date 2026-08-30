@@ -21,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 import openai
 from openai import OpenAI
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 log = logging.getLogger("retry")
 
 DEFAULT_TOKEN_SCOPE = "https://ai.azure.com/.default"
@@ -179,12 +179,12 @@ def dump_headers(title, status, headers):
         grouped.update(names)
         rows = [(name, lowered[name]) for name in names if name in lowered]
         if rows:
-            print(f"[{group}]")
+            print(f"{group}:")
             for name, value in rows:
                 print(f"  {name}: {value}")
     others = sorted((k, v) for k, v in lowered.items() if k not in grouped)
     if others:
-        print("[etc]")
+        print("etc")
         for name, value in others:
             print(f"  {name}: {value}")
 
@@ -220,10 +220,12 @@ def run_worker(worker_id, client, args):
     """한 요청을 최대 --max-attempts 번까지 재시도한다."""
     for attempt_index in range(args.max_attempts):
         attempt = attempt_index + 1
+        label = f"worker {worker_id} 시도 {attempt}"
         try:
+            print(f"\n=== Request | {label} ===")
             raw = call(client, args.deployment, args)
         except openai.APIStatusError as exc:
-            dump_headers(f"worker {worker_id} 시도 {attempt}", exc.status_code, exc.response.headers)
+            dump_headers(f"Response | {label}", exc.status_code, exc.response.headers)
 
             if exc.status_code not in RETRYABLE:
                 log.error("worker %s: HTTP %s 는 재시도 대상이 아니다", worker_id, exc.status_code)
@@ -252,7 +254,7 @@ def run_worker(worker_id, client, args):
             time.sleep(delay)
             continue
 
-        dump_headers(f"worker {worker_id} 시도 {attempt}", raw.http_response.status_code, raw.headers)
+        dump_headers(f"Response | {label}", raw.http_response.status_code, raw.headers)
         log.info("worker %s: %s 번째 시도에서 성공", worker_id, attempt)
         return True
 

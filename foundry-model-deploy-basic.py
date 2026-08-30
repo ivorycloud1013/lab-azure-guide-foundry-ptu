@@ -151,12 +151,12 @@ def dump_headers(title, status, headers):
         grouped.update(names)
         rows = [(name, lowered[name]) for name in names if name in lowered]
         if rows:
-            print(f"[{group}]")
+            print(f"{group}:")
             for name, value in rows:
                 print(f"  {name}: {value}")
     others = sorted((k, v) for k, v in lowered.items() if k not in grouped)
     if others:
-        print("[etc]")
+        print("etc")
         for name, value in others:
             print(f"  {name}: {value}")
 
@@ -165,7 +165,7 @@ def report_result(payload, args):
     """응답 본문을 요약하고, images.* 는 --output-image 경로에 저장한다."""
     if args.api not in IMAGE_APIS:
         message = payload.choices[0].message.content or ""
-        log.info("응답: %s", message.strip().replace("\n", " ")[:160])
+        log.info("Answer: %s", message.strip().replace("\n", " ")[:160])
         return
 
     image_b64 = payload.data[0].b64_json
@@ -185,13 +185,14 @@ def main():
     client = build_client(check_endpoint(args.endpoint), args.api_key, args.token_scope)
 
     try:
+        print("\n=== Request ===")
         raw = call(client, args)
     except openai.APIStatusError as exc:
-        dump_headers("응답", exc.status_code, exc.response.headers)
+        dump_headers("Response", exc.status_code, exc.response.headers)
         log.error("호출 실패: HTTP %s", exc.status_code)
         raise SystemExit(1)
 
-    dump_headers("응답", raw.http_response.status_code, raw.headers)
+    dump_headers("Response", raw.http_response.status_code, raw.headers)
     report_result(raw.parse(), args)
 
 
