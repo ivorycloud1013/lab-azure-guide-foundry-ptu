@@ -268,9 +268,12 @@ python foundry-model-deploy-basic.py \
 |---|:---:|:---:|---|
 | `retry-after` | O | O | 초 단위 대기 시간 |
 | `retry-after-ms` | O | O | **밀리초 단위 대기 시간.** 더 정밀하므로 우선 사용 |
-| `x-ratelimit-limit-requests` / `-tokens` | O | - | 분당 요청·토큰 한도(RPM/TPM) |
-| `x-ratelimit-remaining-requests` / `-tokens` | O | - | 남은 요청·토큰 |
-| `x-ratelimit-reset-requests` / `-tokens` | O | - | 한도 리셋까지 남은 시간 |
+| `x-ratelimit-limit-requests` | O | - | 분당 요청 한도(RPM) |
+| `x-ratelimit-limit-tokens` | O | - | 분당 토큰 한도(TPM) |
+| `x-ratelimit-remaining-requests` | O | - | 남은 요청 수 |
+| `x-ratelimit-remaining-tokens` | O | - | 남은 토큰 수 |
+| `x-ratelimit-reset-requests` | O | - | 요청 한도가 리셋되기까지 남은 시간 |
+| `x-ratelimit-reset-tokens` | O | - | 토큰 한도가 리셋되기까지 남은 시간 |
 | `x-ms-deployment-name` | O | O | **실제로 요청을 처리한 배포 이름** |
 | `x-ms-spillover-from-deployment` | S | - | **존재 자체가 spillover 됐다는 뜻.** 값은 원래의 PTU 배포 이름 |
 | `x-ms-spillover-error` | S | - | spillover 를 유발한 PTU 쪽 원본 상태 코드 (429 / 500 / 503) |
