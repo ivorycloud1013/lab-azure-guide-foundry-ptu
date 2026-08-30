@@ -227,20 +227,22 @@ Python 코드의 입력 매개변수에 대한 설명은 아래와 같다.
 | `--output-image` | | `./output-<api>.png` | `images.*` 결과를 저장할 경로. `images.generate` 면 `./output-images-generate.png` |
 
 ```bash
-# 이미지 생성
+# 이미지 생성 — --output-image 를 생략하면 ./output-images-generate.png 로 저장
 python foundry-model-deploy-basic.py \
   --endpoint https://<foundry-resource-subdomain>.openai.azure.com/openai/v1/ \
   --deployment gpt-image-2 \
   --api images.generate
 
-# 생성한 이미지를 편집
+# 생성한 이미지를 편집 — 저장 경로를 직접 지정
 python foundry-model-deploy-basic.py \
   --endpoint https://<foundry-resource-subdomain>.openai.azure.com/openai/v1/ \
   --deployment gpt-image-2 \
-  --api images.edit --image ./output-images-generate.png \
-  --prompt "add a red scarf"
+  --api images.edit \
+  --image ./output-images-generate.png \
+  --prompt "add a red scarf" \
+  --output-image ./scarf.png
 
-# 채팅 완성
+# 채팅 완성 — images.* 가 아니므로 --output-image 는 쓰지 않는다
 python foundry-model-deploy-basic.py \
   --endpoint https://<foundry-resource-subdomain>.openai.azure.com/openai/v1/ \
   --deployment gpt-5-mini \

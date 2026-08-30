@@ -19,7 +19,7 @@
         --endpoint https://<foundry-resource-subdomain>.openai.azure.com/openai/v1/ \\
         --deployment gpt-image-2 \\
         --api images.edit --image ./output-images-generate.png \\
-        --prompt "add a red scarf"       # ./output-images-edit.png 로 저장
+        --prompt "add a red scarf" --output-image ./scarf.png
 """
 
 import argparse
