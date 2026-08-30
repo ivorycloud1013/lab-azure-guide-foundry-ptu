@@ -1,26 +1,4 @@
 #!/usr/bin/env python3
-"""Foundry 모델 배포 엔드포인트를 호출하는 기본 로직.
-
-한 번만 호출하고 응답 헤더를 전부 출력한다. 재시도는 하지 않는다.
-인증과 엔드포인트 설정이 맞는지, 어느 배포가 요청을 처리했는지 보는 기준선이다.
-
---api 로 호출할 API 를 고른다.
-
-    images.generate   프롬프트로 이미지를 생성한다
-    images.edit       입력 이미지를 --image 로 받아 편집한다
-    chat.completions  채팅 완성을 호출한다
-
-    python foundry-model-deploy-basic.py \\
-        --endpoint https://<foundry-resource-subdomain>.openai.azure.com/openai/v1/ \\
-        --deployment gpt-image-2 \\
-        --api images.generate            # ./output-images-generate.png 로 저장
-
-    python foundry-model-deploy-basic.py \\
-        --endpoint https://<foundry-resource-subdomain>.openai.azure.com/openai/v1/ \\
-        --deployment gpt-image-2 \\
-        --api images.edit --image ./output-images-generate.png \\
-        --prompt "add a red scarf" --output-image ./scarf.png
-"""
 
 import argparse
 import base64
@@ -30,7 +8,7 @@ import os
 import openai
 from openai import OpenAI
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 log = logging.getLogger("basic")
 
 DEFAULT_TOKEN_SCOPE = "https://ai.azure.com/.default"
@@ -57,8 +35,10 @@ HEADER_GROUPS = {
         "x-ratelimit-remaining-requests", "x-ratelimit-remaining-tokens",
         "x-ratelimit-reset-requests", "x-ratelimit-reset-tokens",
     ),
-    "deployment": (
+    "spillover": (
         "x-ms-deployment-name",
+        "x-ms-spillover-from-deployment",
+        "x-ms-spillover-error",
     ),
     "trace": (
         "apim-request-id", "x-request-id", "x-ms-request-id", "x-ms-client-request-id",
@@ -203,16 +183,12 @@ def report_result(payload, args):
 def main():
     args = parse_args()
     client = build_client(check_endpoint(args.endpoint), args.api_key, args.token_scope)
-    log.info("배포 %s 호출 (api=%s)", args.deployment, args.api)
 
     try:
         raw = call(client, args)
     except openai.APIStatusError as exc:
         dump_headers("응답", exc.status_code, exc.response.headers)
         log.error("호출 실패: HTTP %s", exc.status_code)
-        if exc.status_code == 429:
-            log.error("PTU 사용률이 100% 에 도달했다. 재시도는 "
-                      "foundry-model-ptu-deploy-429-retry.py 참고")
         raise SystemExit(1)
 
     dump_headers("응답", raw.http_response.status_code, raw.headers)
