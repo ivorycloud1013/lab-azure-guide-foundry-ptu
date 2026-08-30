@@ -303,6 +303,7 @@ Python 코드의 입력 매개변수에 대한 설명은 아래와 같다.
 | `--auth` | | `entra-id` | `entra-id` \| `entra-id=<스코프>` \| `api-key=<키>` |
 | `--prompt` | | | 프롬프트 |
 | `--image` | | | 편집할 입력 이미지 경로. `images.edit` 일 때 필수 |
+| `--max-tokens` | | `256` | `chat.completions` 전용. PTU 사용률 추정에 직접 반영된다 |
 | `--max-attempts` | | `5` | 요청 하나당 최대 시도 횟수 |
 | `--burst` | | `1` | 동시 요청 수. 2 이상이면 429 를 실제로 유발할 수 있다 |
 
@@ -314,11 +315,13 @@ python foundry-model-ptu-deploy-429-retry.py \
   --burst 20 --max-attempts 6
 ```
 
-`max_tokens` 는 PTU 사용률 추정에 그대로 반영된다. 실제 생성량보다 크게 잡으면 사용률이 과하게 차올라 동시 처리량이 줄어든다. ([프로덕션 운영 문서](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/provisioned-get-started))
+응답 헤더는 [3.1.1](#311-응답-헤더-정보) 표에서 다룬다.
+
+`--api chat.completions` 인 경우, `--max-tokens` 로 지정한 값이 PTU 사용률 추정에 그대로 반영된다. 실제 생성량보다 크게 잡으면 사용률이 과하게 차올라 동시 처리량이 줄어든다. 이미지 모델(`images.*`)은 이 파라미터를 받지 않는다. ([프로덕션 운영 문서](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/provisioned-get-started))
 
 `retry-after-ms` 가 있으면 그 값을, 없으면 지수 백오프(1s → 2s → 4s …, 상한 30s)를 쓴다. 동시 요청이 같은 시각에 재차 몰리지 않도록 25% 지터를 더한다. 워커별 시도 횟수와 총 대기 시간이 요약으로 표시된다.
 
-응답 헤더는 [3.1.1](#311-응답-헤더-정보) 표에서 `PTU` 에 해당하는 값만 다룬다. 실제 용량 산정을 위한 부하 테스트에는 [azure-openai-benchmark](https://github.com/Azure/azure-openai-benchmark) 를 쓰고, 정상 상태 수치를 얻으려면 최소 10분 이상 돌린다.
+
 
 ### 3.3 `foundry-model-ptu-deploy-429-spillover.py`
 

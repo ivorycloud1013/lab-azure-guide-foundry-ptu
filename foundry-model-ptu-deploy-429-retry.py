@@ -32,7 +32,7 @@ AUTH_API_KEY_PREFIX = "api-key="
 DEFAULT_IMAGE_PROMPT = "A cute baby polar bear"
 DEFAULT_CHAT_PROMPT = "Explain the purpose of an API in one sentence."
 IMAGE_SIZE = "1024x1024"
-# PTU 사용률은 prompt 토큰 + max_tokens 추정치로 계산된다.
+# --max-tokens 기본값. PTU 사용률은 prompt 토큰 + max_tokens 추정치로 계산되므로
 # 실제 생성량에 가깝게 잡아야 동시 처리량이 올라간다.
 MAX_OUTPUT_TOKENS = 256
 
@@ -108,6 +108,9 @@ def parse_args():
                         help=f"호출할 API (기본 {API_IMAGES_GENERATE})")
     parser.add_argument("--prompt", help="프롬프트 (기본값은 --api 별로 다름)")
     parser.add_argument("--image", help="images.edit 의 입력 이미지 경로. images.edit 일 때 필수")
+    parser.add_argument("--max-tokens", type=int, default=MAX_OUTPUT_TOKENS,
+                        help=f"chat.completions 전용. PTU 사용률 추정에 직접 반영된다 "
+                             f"(기본 {MAX_OUTPUT_TOKENS})")
     parser.add_argument("--max-attempts", type=int, default=5,
                         help="요청 하나당 최대 시도 횟수 (기본 5)")
     parser.add_argument("--burst", type=int, default=1,
@@ -150,7 +153,7 @@ def call(client, deployment, args):
         return client.chat.completions.with_raw_response.create(
             model=deployment,
             messages=[{"role": "user", "content": args.prompt}],
-            max_completion_tokens=MAX_OUTPUT_TOKENS,
+            max_completion_tokens=args.max_tokens,
         )
     if args.api == API_IMAGES_EDIT:
         with open(args.image, "rb") as source:
