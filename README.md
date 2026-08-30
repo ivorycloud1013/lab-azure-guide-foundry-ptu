@@ -283,10 +283,11 @@ sequenceDiagram
     Entra-->>Client: Bearer token — 만료 시 자동 갱신
     Client->>EP: 추론 요청<br/>Authorization: Bearer / model = 배포 이름
     EP->>Deployment: Model deployment로 라우팅
-    Deployment-->>EP: 429 Too Many Requests
-    EP-->>Client: 429 + retry-after-ms
-    Note over Client: retry-after-ms 만큼 대기<br/>헤더가 없으면 지수 백오프
-    Client->>EP: 동일 요청 재전송
+    Deployment-->>EP: Status code=429 (Too Many Requests)
+    EP-->>Client: Status code=429 + 응답 헤더 retry-after-ms
+    Note over Client: 응답 헤더의 retry-after-ms 만큼 대기,<br/>없으면 백오프
+    Note over Deployment: 대기하는 동안<br/>Utilization 이 100% 이하로 떨어짐
+    Client->>EP: 동일 요청 재시도
     EP->>Deployment: Model deployment로 라우팅
     Deployment-->>EP: 200 OK
     EP-->>Client: 200 OK
