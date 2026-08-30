@@ -155,7 +155,7 @@ Language / Authentication method 를 고른 샘플이 나온다. 코드에 `endp
 
 ![삭제 진행](images/foundry-build-models-gpt-image-2-deleting.png)
 
-[delete] 을 눌러 모델 배포를 삭제한다. **<span style="color:red">과금은 모델 배포를 삭제해야 멈춘다. Foundry 리소스 삭제는 purge (영구삭제) 될 때까지 배포된 상태로 남아 있어 과금이 지속됩니다.</span>**
+[delete] 을 눌러 모델 배포를 삭제한다. **<span style="color:red">과금은 모델 배포를 삭제해야 멈춘다. Foundry 리소스 삭제는 purge (영구삭제) 될 때까지 배포된 상태로 남아 있어 과금이 지속된다.</span>**
 
 ### 2.8 모니터링
 PTU 배포는 정해진 throughput 을 할당하여 운영하며 배포 앤드포인트에서 얼마나 throughput 을 소비하는지 `Azure Monitor` 를 통해 추적할 수 있다.
@@ -181,35 +181,27 @@ PTU 배포를 호출하고, 429 를 만나고, spillover 로 넘기기까지를 
 
 ### 3.1 전체 구성
 
+애플리케이션이 Entra ID 로 토큰을 받아 Foundry 엔드포인트를 호출하고, 요청이 PTU 배포로 라우팅되기까지의 흐름이다.
+
 ```mermaid
-flowchart TB
-    App["애플리케이션<br/>(openai SDK v1)"]
+sequenceDiagram
+    autonumber
+    participant App as 애플리케이션<br/>(openai SDK v1)
+    participant Entra as Microsoft Entra ID
+    participant EP as Foundry 엔드포인트<br/>/openai/v1/
+    participant PTU as gpt-image-2<br/>Global Provisioned · 100 PTU
+    participant STD as gpt-image-2-paygo<br/>Global Standard (PayGo)
+    participant Mon as Azure Monitor
 
-    subgraph Entra["Microsoft Entra ID"]
-        Cred["DefaultAzureCredential<br/>scope: https://ai.azure.com/.default"]
-    end
-
-    subgraph Res["Foundry 리소스 : minwook-foundry-northce-resource"]
-        direction TB
-        EP["v1 데이터플레인 엔드포인트<br/>/openai/v1/"]
-        PTU["배포: gpt-image-2<br/>Global Provisioned · 100 PTU<br/>Guardrails: DefaultV2"]
-        STD["배포: gpt-image-2-paygo<br/>Global Standard (PayGo)<br/>※ 스필오버 전제조건"]
-        EP --> PTU
-        EP --> STD
-        PTU -. "spilloverDeploymentName" .-> STD
-    end
-
-    Mon["Azure Monitor<br/>Provisioned-managed utilization V2<br/>ModelDeploymentName / StatusCode / IsSpillover"]
-
-    App -->|"① 토큰 요청"| Cred
-    Cred -->|"② Bearer 토큰"| App
-    App -->|"③ 추론 요청 (Bearer)"| EP
-    PTU -.-> Mon
-    STD -.-> Mon
-
-    style PTU fill:#dcfce7,stroke:#16a34a
-    style STD fill:#fef3c7,stroke:#d97706
-    style Entra fill:#eef2ff,stroke:#6366f1
+    App->>Entra: 토큰 요청 (DefaultAzureCredential)<br/>scope: https://ai.azure.com/.default
+    Entra-->>App: Bearer 토큰 — 만료 시 자동 갱신
+    App->>EP: 추론 요청<br/>Authorization: Bearer / model = 배포 이름
+    EP->>PTU: 배포로 라우팅 (Guardrails: DefaultV2)
+    PTU-->>EP: 200 OK
+    EP-->>App: 200 OK + 응답 헤더<br/>x-ms-deployment-name / x-ratelimit-* / retry-after*
+    Note over PTU,STD: PTU 사용률이 100% 면 429 를 반환한다.<br/>spilloverDeploymentName 이 설정돼 있으면 STD 로 넘어간다 (3.8)
+    PTU--)Mon: Provisioned-managed utilization V2
+    STD--)Mon: Azure OpenAI Requests (IsSpillover)
 ```
 
 ### 3.2 파일 구성
