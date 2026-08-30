@@ -100,8 +100,8 @@ def parse_args():
                         help="스필오버 대상 Standard(PayGo) 배포 이름")
     parser.add_argument("--standard-endpoint",
                         help="표준 배포가 다른 리소스에 있을 때만 지정 (기본: --endpoint 와 동일)")
-    parser.add_argument("--spillover-mode", choices=("client", "header", "both"), default="client",
-                        help="client=앱이 직접 전환, header=서비스에 위임, both=둘 다 (기본 client)")
+    parser.add_argument("--spillover-mode", choices=("client", "header"), default="client",
+                        help="client=클라이언트가 직접 전환, header=서비스에 위임 (기본 client)")
     parser.add_argument("--auth", default=AUTH_ENTRA_ID, metavar="METHOD",
                         help=f"{AUTH_ENTRA_ID} (기본) | {AUTH_ENTRA_ID}=<스코프> | api-key=<키>")
     parser.add_argument("--api",
@@ -239,13 +239,12 @@ def main():
     log.info("PTU %s -> Standard %s | 방식 %s",
              args.ptu_deployment, args.standard_deployment, args.spillover_mode)
 
-    results = []
-    if args.spillover_mode in ("client", "both"):
-        results.append(run_client_spillover(ptu_endpoint, standard_endpoint, args))
-    if args.spillover_mode in ("header", "both"):
-        results.append(run_header_spillover(ptu_endpoint, args))
+    if args.spillover_mode == "client":
+        succeeded = run_client_spillover(ptu_endpoint, standard_endpoint, args)
+    else:
+        succeeded = run_header_spillover(ptu_endpoint, args)
 
-    if not all(results):
+    if not succeeded:
         raise SystemExit(1)
 
 
