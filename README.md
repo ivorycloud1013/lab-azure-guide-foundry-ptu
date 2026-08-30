@@ -4,20 +4,16 @@ Microsoft Foundry 에서 [PTU(Provisioned Throughput Unit)](https://learn.micros
 
 ---
 
----
-
 ## 목차
 
-1. [요약](#요약)
-2. [PTU 란](#1-ptu-란)
-3. [포털에서 PTU 배포하기](#2-포털에서-ptu-배포하기)
-4. [아키텍처 블록 다이어그램](#3-아키텍처-블록-다이어그램)
-5. [샘플 코드 실행](#4-샘플-코드-실행)
-6. [정리 — 과금 중단](#5-정리--과금-중단)
+0. [요약](#0-요약)
+1. [PTU 란](#1-ptu-란)
+2. [AI Portal 에서 PTU 배포하기](#2-ai-portal-에서-ptu-배포하기)
+3. [샘플 코드 실행](#3-샘플-코드-실행)
 
 ---
 
-## 요약
+## 0. 요약
 
 - PTU 는 처리 용량(throughput)을 시간 단위로 구매하는 배포 방법으로, 배포되어 Endpoint 가 제공되면 hourly billing 로 과금이 발생한다. 배포를 지워야 과금이 멈춘다.
 - PTU 의 처리 용량을 초과하는 요청은 Too Many Requests (429 HTTP Status Code) 로 즉시 응답하여, 사용자에게 제어권을 넘긴다.
@@ -88,155 +84,100 @@ PTU 는 배포된 PTU 수에 따라 hourly billing `$/PTU/hr` 으로 청구된�
 
 ---
 
-## 2. 포털에서 PTU 배포하기
+## 2. AI Portal 에서 PTU 배포하기
 
-### 2.1 프로젝트 홈에서 엔드포인트 확인
+### 2.1 Foundry project home에서 엔드포인트 확인
 
-![Foundry 홈](images/foundry.png)
+![Foundry home](images/foundry.png)
 
-**New Foundry** 토글이 켜져 있어야 한다. 홈 화면에서 두 종류의 엔드포인트를 확인할 수 있다.
+**New Foundry** 토글이 켜져 있어야 사진과 같이 New Foundry UI 로 진입한다. home 화면에서 두 종류의 엔드포인트를 확인할 수 있다. 추론 요청에는 2가지 host 모두 사용이 가능하며, url 경로는 `/openai/v1/` 로 끝나야 한다.
 
-| 항목 | 값 |
+| 엔드포인트 | 값 |
 |---|---|
-| Project endpoint | `https://minwook-foundry-northce-resource.services.ai.azure.com/...` |
-| Azure OpenAI endpoint | `https://minwook-foundry-northce-resource.openai.azure.com/...` |
-| API key | **비활성화됨** → Entra ID 인증만 사용 |
-
-> 추론에는 두 호스트 중 어느 쪽을 써도 된다. 다만 **경로가 반드시 `/openai/v1/` 로 끝나야** 하며, 아니면 404 가 난다. 스크립트는 `FOUNDRY_ENDPOINT` 에 호스트만 넣어도 이 경로를 자동으로 붙인다.
+| Project endpoint | `https://<service-subdomain>.services.ai.azure.com/...` |
+| Azure OpenAI endpoint | `https://<service-subdomain>.openai.azure.com/...` |
+| API key | Azure 구독 정책에 따라 비활성화될 수 있음 |
 
 ### 2.2 모델 검색
 
 ![모델 검색](images/foundry-discover-models-gpt-image-2-search.png)
 
-**Discover → Models** 에서 모델을 찾는다. 좌측 필터의 **Deployment SKU** / **Collections(Direct from Azure)** 로 PTU 지원 모델만 좁힐 수 있다.
+상단 navigator 에서 [Discover] → [Models] 에서 모델을 찾아 선택하고 모델 상세 페이지로 진입한다. 모델 검색 결과에 원하는 모델이 나오지 않는다면, Availability 에서 [All models] 를 선택한다.
 
 ### 2.3 Deploy → Custom settings
 
 ![Deploy 드롭다운](images/foundry-discover-models-gpt-image-2-deploy-settings.png)
 
-**Deploy** 버튼의 두 갈래 중 반드시 **Custom settings** 를 고른다.
+모델 상세 페이지에서 [Deploy] → [Custom settings] 를 선택한다. 참고로, Default settings 은 global standard 와 기본 quota 조합의 모델 배포 옵션이다.
 
-- *Default settings*: global standard + 기본 쿼터 → **PTU 배포가 아니다**
-- *Custom settings*: SKU, 쿼터, PTU, 스필오버, 가드레일 직접 지정
-
-### 2.4 배포 유형과 PTU 계산기
+### 2.4 상세 설정하여 모델 배포하기
 
 ![배포 설정](images/foundry-discover-models-gpt-image-2-deploy-settings-advanced.png)
+![PTU 및 요금](images/foundry-discover-models-gpt-image-2-deploy-settings-spill-over.png)
 
-| 항목 | 캡처 값 |
-|---|---|
-| Deployment name | `gpt-image-2` |
-| Deployment type | **Global Provisioned Throughput** |
-| Model version | `2026-04-21-private` |
+요청한 PTU 의 location 정보를 포함한 배포 유형에 맞춰 입력값을 선택한다. 일반적으로 Model version 은 latest 로 하여 배포한다. 배포에 할당한 PTUs 는 직접 입력이 가능하며, 상단에 있는 [Calculate provisioned throughput unit capacity] 를 이용하여 모델별 용량을 계산하여 PTUs 를 할당할 수도 있다.
+모델 배포 앤드포인트는 정해진 capacity 를 초과한 요청에 대해서는 다른 앤드포인트로 [spillover](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/spillover-traffic-management) 할 수 있으며, 일반적으로는 Paygo 모델 배포를 지정한다.
 
-**Calculate provisioned throughput unit (PTU) capacity** 에 다음 세 값을 넣고 **Calculate** 를 누르면 필요한 PTU 추정치가 나온다.
+| 입력값 | 설명 | 예시 |
+|---|---|---|
+| Deployment name | 모델 배포 이름 | `gpt-image-2` |
+| Deployment type | 모델 배포 유형 | **Global Provisioned Throughput** |
+| Model version | 모델 상세 버전 | `2026-04-21-private` |
+| Provisioned throughtput units | 배포에 할당할 PTU 수 | `100` |
+| Traffic spillover | (Optional) Spillover 시 연결할 배포 이름, 지정안해도 됨 | `gpt-image-2-paygo` |
+| Guardrails | 모델 배포에 전후처리될 가드레일 instance | `DefaultV2` |
+| Pricing terms | 과금에 대한 description, 체크박스에 동의해야 [Deploy] 활성화 | `acknowledged` |
 
-- Input tokens per minute
-- Output tokens per minute
-- Requests per minute
+입력값을 모두 설정했다면, [Deploy] 한다. [Traffic spillover] 를 사용하지 않을 거라면 disable 하여 [Deploy] 할 수 있다.
 
-### 2.5 PTU 수량과 요금 확인
-
-![PTU 및 요금](images/foundry-discover-models-gpt-image-2-deploy-deploy.png)
-
-- **Provisioned throughput units (PTUs)**: `100 / 100` — 슬라이더 오른쪽 값이 이 구독·리전·배포유형의 남은 쿼터다.
-- **Guardrails**: `DefaultV2`
-- **Pricing terms**: *"charged $100.00 per hour (list price, USD) if run as an on-demand deployment"* — Azure Reservation 으로 크게 낮출 수 있다는 안내가 함께 나온다.
-- 체크박스에 동의해야 **Deploy** 가 활성화된다.
-
-### 2.6 Traffic spillover 켜기
-
-![Traffic spillover](images/foundry-discover-models-gpt-image-2-deploy-settings-spill-over.png)
-
-**Traffic spillover** 토글을 켜면 **Spillover deployment** 를 골라야 한다. 이것이 [스필오버 문서](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/spillover-traffic-management)가 설명하는 배포 속성 `spilloverDeploymentName` 에 해당한다.
-
-> ⚠️ 캡처의 경고 그대로: **동일 모델·동일 버전의 활성 표준(PayGo) 배포가 같은 리소스 안에 최소 하나 있어야** 스필오버를 켤 수 있다. 없으면 드롭다운이 비어 Deploy 가 막힌다.
->
-> → **표준 배포를 먼저 만들고, 그다음 PTU 배포를 만들면서 스필오버를 지정**하는 순서가 편하다. 이미 만든 PTU 배포에 나중에 추가해도 된다.
-
-REST([Deployments - Create Or Update](https://learn.microsoft.com/en-us/rest/api/aiservices/accountmanagement/deployments/create-or-update))로 설정할 경우:
-
-```bash
-curl -X PUT "https://management.azure.com/subscriptions/<SUB_ID>/resourceGroups/<RG>/providers/Microsoft.CognitiveServices/accounts/<ACCOUNT>/deployments/gpt-image-2?api-version=2024-10-01" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $(az account get-access-token --resource https://management.azure.com --query accessToken -o tsv)" \
-  -d '{
-        "sku": { "name": "GlobalProvisionedManaged", "capacity": 100 },
-        "properties": {
-          "spilloverDeploymentName": "gpt-image-2-paygo",
-          "model": { "format": "OpenAI", "name": "gpt-image-2", "version": "2026-04-21" }
-        }
-      }'
-```
-
-### 2.7 배포 확인
+### 2.5 배포 확인
 
 ![배포 목록](images/foundry-build-models-gpt-image-2-delete.png)
 
-**Build → Models → Deployments → Serverless deployments** 에서 상태를 확인한다. `Deployment type` 이 `Global Provi...`, `Deployment status` 가 `Succeeded` 면 완료다. 이 화면 상단의 **PTU Calculator** 버튼으로 사이징을 다시 계산할 수도 있다.
+[Build] → [Models] → [Deployments] 에서 모델 배포를 확인한다. 모델을 선택하여 상세 페이지로 진입한다.
 
-### 2.8 샘플 코드 확인
+### 2.6 샘플 코드 확인
 
 ![Playground View code](images/foundry-build-models-gpt-image-2-view-code.png)
 
-Playground 의 **View code** 를 누르면,
+Playground 의 [View code] 를 누르면,
 
 ![Sample code](images/foundry-build-models-gpt-image-2-sample-code.png)
 
-Language / Authentication method 를 고른 샘플이 나온다. **Entra ID authentication** 기준 Python 코드가 이 리포 스크립트의 출발점이다. 다른 언어(.NET, JavaScript, Java, Go)의 동일 예제는 [Azure OpenAI SDK language support](https://learn.microsoft.com/en-us/azure/foundry/openai/supported-languages) 에 있다.
+Language / Authentication method 를 고른 샘플이 나온다. 코드에 `endpoint` 와 `deployment_name` 을 확인하고, `authentication method` 는 개발 환경에 맞춰 설정하여 코드를 확인한다. [Sample code] 에서 짚고 넘어갈 사항은:
+1. Framework client 로 `OpenAI` 클라이언트를 쓴다.
+2. `api_key` 를 써도 되지만, 정책에 따라 `api_key` 를 사용이 불가하다면 `Entra ID` 로 인증 가능하다. (`az login` 필수)
+3. 추론 요청 API 의 `model` 파라미터에는 모델 이름이 아니라 **배포 이름**을 넣는다.
 
-```python
-from openai import OpenAI
-from azure.identity import DefaultAzureCredential, get_bearer_token_provider
-
-endpoint = "https://minwook-foundry-northce-resource.services.ai.azure.com/openai/v1"
-deployment_name = "gpt-image-2"
-token_provider = get_bearer_token_provider(
-    DefaultAzureCredential(), "https://ai.azure.com/.default"
-)
-
-client = OpenAI(base_url=endpoint, api_key=token_provider)
-```
-
-포인트 세 가지:
-
-1. `AzureOpenAI` 가 아니라 **`OpenAI`** 클라이언트를 쓴다 (v1 데이터플레인).
-2. `api_key` 에 **토큰 프로바이더 함수를 그대로 넘긴다** — 만료 시 자동 갱신된다. `openai>=1.106.0` 필요.
-3. `model` 파라미터에는 모델 이름이 아니라 **배포 이름**을 넣는다.
-
-### 2.9 배포 삭제
+### 2.7 배포 삭제
 
 ![삭제 확인](images/foundry-build-models-gpt-image-2-delete-popup.png)
 
 ![삭제 진행](images/foundry-build-models-gpt-image-2-deleting.png)
 
-hourly billing 은 배포를 지워야 멈춘다. 전체 정리 절차는 [5. 정리 — 과금 중단](#5-정리--과금-중단) 참고.
+[delete] 을 눌러 모델 배포를 삭제한다. **<span style="color:red">과금은 모델 배포를 삭제해야 멈춘다. Foundry 리소스 삭제는 purge (영구삭제) 될 때까지 배포된 상태로 남아 있어 과금이 지속됩니다.</span>**
 
-### 2.10 모니터링 — PTU 사용률
+### 2.8 모니터링
+PTU 배포는 정해진 throughput 을 할당하여 운영하며 배포 앤드포인트에서 얼마나 throughput 을 소비하는지 `Azure Monitor` 를 통해 추적할 수 있다.
+- [Azure Portal] → [Foundry 리소스] → [Monitoring - Metrics] → [[Provisioned-managed utilization V2](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/provisioned-get-started#measure-deployment-utilization)]
 
-Azure Portal → 리소스 → **Metrics** → **[Provisioned-managed utilization V2](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/provisioned-get-started#measure-deployment-utilization)**
+PTU 배포가 다수가 존재하면 `Apply splitting` 으로 PTU 배포별로 나눠 볼 수 있다. Utilization 이 100% 에 saturation 된다면 PTU 를 증설하거나 spillover 해야 한다.
 
-```
-PTU 사용률 = 기간 내 소비 PTU / 기간 내 배포 PTU
-```
-
-배포가 여러 개면 **Apply splitting** 으로 배포별로 나눠 본다. 지속적으로 100% 에 붙어 있으면 PTU 를 늘리거나 스필오버를 켜야 한다는 신호다.
-
-### 2.11 모니터링 — 스필오버 트래픽 분리
-
-`Azure OpenAI Requests` 메트릭에 다음 분할을 적용한다.
-
-| 분할 | 용도 |
+Spillover 된 요청은 [Azure OpenAI Requests](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/spillover-traffic-management#monitor-spillover-usage) 메트릭에 `Apply splitting` 에 아래 파리미터를 적용하여 확인할 수 있다.
+| 파라미터 | 용도 |
 |---|---|
-| `ModelDeploymentName` | PTU 배포 vs 표준 배포 처리량 비교 |
-| `StatusCode` | 200 / 429 분포 |
-| `IsSpillover` | **표준 배포로 들어온 트래픽 중 스필오버분만 분리** |
+| `ModelDeploymentName` | 모델 배포 이름 |
+| `StatusCode` | HTTP 응답 코드 |
+| `IsSpillover` | Spillover 로 인한 요청 여부 |
 
-> 중요: 스필오버된 요청은 PTU 배포 쪽에 429 로 **집계되지 않는다.** 표준 배포에 `IsSpillover = True` + 최종 상태 코드(보통 200)로 기록된다. PTU 배포의 429 카운트만 보고 "스필오버가 없다"고 판단하면 안 된다. 분할 적용 화면과 차트 예시는 [스필오버 모니터링 문서](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/spillover-traffic-management#monitor-spillover-usage)에 있다.
+Spillover 된 요청은 PTU 배포쪽에 429 로 집계되지 않고 해당 요청을 처리한 배포에 최종 HTTP Status code 로 기록된다 (정상 추론시 200).
 
 ---
 
-## 3. 아키텍처 블록 다이어그램
+## 3. 샘플 코드 실행
+
+PTU 배포를 호출하고, 429 를 만나고, spillover 로 넘기기까지를 스크립트 3종으로 확인한다.
+모든 호출은 `with_raw_response` 로 보내 성공·실패에 상관없이 응답 헤더를 전부 출력한다.
 
 ### 3.1 전체 구성
 
@@ -271,120 +212,7 @@ flowchart TB
     style Entra fill:#eef2ff,stroke:#6366f1
 ```
 
-### 3.2 PTU 사용률과 429 — leaky bucket
-
-```mermaid
-flowchart LR
-    Req["요청 도착"] --> Chk{"현재 사용률<br/>= 100% ?"}
-    Chk -->|"예"| R429["즉시 429 반환<br/>+ retry-after / retry-after-ms<br/>(큐잉하지 않음)"]
-    Chk -->|"아니오"| Est["비용 추정<br/>prompt 토큰(캐시 제외)<br/>+ max_tokens"]
-    Est --> Fill["버킷에 추가"]
-    Fill --> Run["요청 처리"]
-    Run --> Fix["실제 토큰으로 사용률 보정<br/>(추정보다 적으면 되돌림)"]
-    Bucket["버킷은 배포 PTU 수에<br/>비례해 지속적으로 배출<br/>(PTU 많을수록 빨리 빠짐)"] -.-> Fill
-
-    style R429 fill:#fee2e2,stroke:#dc2626
-    style Run fill:#dcfce7,stroke:#16a34a
-```
-
-> `max_tokens` 를 실제 생성량보다 크게 잡으면 버킷을 과하게 채워 **동시 처리량이 줄어든다.** 가능한 한 실제 값에 가깝게 지정할 것. 이 leaky bucket 동작과 429 대응 지침의 원문은 [프로덕션 운영 문서](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/provisioned-get-started)에 있다.
-
-### 3.3 429 대응 3가지 경로
-
-```mermaid
-flowchart TB
-    Start["PTU 배포 호출"] --> Code{"응답"}
-    Code -->|"200"| Done["완료<br/>PTU 시간당 비용만 발생"]
-    Code -->|"429 / 400(롱컨텍스트) / 500 / 503"| Strat{"대응 전략"}
-
-    Strat -->|"A. 재시도"| A["retry-after-ms 만큼 대기 후 재시도<br/>▸ PTU 로만 처리<br/>▸ 추가 비용 없음<br/>▸ 지연 증가<br/>▸ foundry-ptu-429-retry.py"]
-    Strat -->|"B. 서비스 측 스필오버"| B["Foundry 가 같은 리소스의<br/>표준 배포로 자동 라우팅<br/>▸ 왕복 1회, 지연 최소<br/>▸ 스필오버분은 토큰 과금<br/>▸ 배포 속성 또는 요청 헤더"]
-    Strat -->|"C. 클라이언트 측 스필오버"| C["앱이 직접 PayGo 배포 호출<br/>▸ 다른 리소스·리전 가능<br/>▸ 전환 조건을 앱이 통제<br/>▸ 왕복 2회<br/>▸ foundry-ptu-429-spillover.py"]
-
-    A --> Done
-    B --> Done
-    C --> Done
-
-    style Done fill:#dcfce7,stroke:#16a34a
-    style A fill:#eef2ff,stroke:#6366f1
-    style B fill:#fef3c7,stroke:#d97706
-    style C fill:#fae8ff,stroke:#a21caf
-```
-
-### 3.4 서비스 측 스필오버 시퀀스
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant App as 애플리케이션
-    participant FE as Foundry 엔드포인트
-    participant PTU as gpt-image-2 (PTU)
-    participant STD as gpt-image-2-paygo (Standard)
-
-    App->>FE: POST /openai/v1/images/generations<br/>(선택) x-ms-spillover-deployment: gpt-image-2-paygo
-    FE->>PTU: 요청 전달 (PTU 우선)
-    PTU-->>FE: 429 (PTU 소진)
-    Note over FE: 배포 속성 spilloverDeploymentName 또는<br/>요청 헤더가 있으면 자동 전환
-    FE->>STD: 동일 요청 재전달
-    STD-->>FE: 200 OK
-    FE-->>App: 200 OK<br/>x-ms-deployment-name: gpt-image-2-paygo<br/>x-ms-spillover-from-deployment: gpt-image-2<br/>x-ms-spillover-error: 429
-```
-
-> 표준 배포마저 실패하면 표준 배포의 상태 코드와 본문이 그대로 반환된다. 이때도 `x-ms-spillover-from-deployment` 와 `x-ms-spillover-error` 는 남아 있어, "스필오버 실패"와 "표준 배포 직접 실패"를 구분할 수 있다.
-
-### 3.5 클라이언트 측 스필오버 시퀀스
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant App as 애플리케이션
-    participant PTU as PTU 배포
-    participant STD as PayGo 배포<br/>(다른 리소스/리전 가능)
-
-    App->>PTU: 추론 요청
-    PTU-->>App: 429 + retry-after-ms
-    Note over App: 상태 코드가 400/429/500/503 이면<br/>대기하지 않고 즉시 전환
-    App->>STD: 동일 요청 재전송
-    STD-->>App: 200 OK
-    Note over App: 두 응답의 헤더를 모두 로깅해<br/>PTU 소진 빈도를 추적
-```
-
-샘플 스크립트는 응답 헤더를 아래 세 그룹으로 나눠 출력하고, 분류에 없는 헤더도 `[기타]` 로 함께 찍는다.
-
-### 3.6 응답 헤더 — 스로틀링 / 재시도
-
-| 헤더 | 의미 |
-|---|---|
-| `retry-after-ms` | **밀리초 단위 대기 시간.** 더 정밀하므로 우선 사용 |
-| `retry-after` | 초 단위 대기 시간 |
-| `x-ratelimit-remaining-requests` | 남은 요청 수 |
-| `x-ratelimit-remaining-tokens` | 남은 토큰 수 |
-| `x-ratelimit-limit-requests` / `-tokens` | 한도 |
-| `x-ratelimit-reset-requests` / `-tokens` | 한도 리셋까지 남은 시간 |
-
-> PTU 배포는 429 와 함께 `retry-after` **와** `retry-after-ms` 를 모두 돌려준다. 임의의 지수 백오프보다 이 값을 쓰는 편이 정확하다 — 버킷이 언제 비는지는 서비스만 알기 때문이다.
-
-### 3.7 응답 헤더 — 스필오버
-
-| 헤더 | 의미 |
-|---|---|
-| `x-ms-deployment-name` | **실제로 요청을 처리한 배포 이름.** 스필오버됐다면 표준 배포 이름이 들어온다 |
-| `x-ms-spillover-from-deployment` | **존재 자체가 스필오버됐다는 뜻.** 값은 원래의 PTU 배포 이름 |
-| `x-ms-spillover-error` | 스필오버를 유발한 PTU 쪽 원본 상태 코드 (429 / 500 / 503 등). 스필오버 성공 여부와 무관하게 항상 붙는다 |
-
-`foundry-ptu-basic.py` 는 이 세 헤더만 보고 **서비스 측 스필오버가 실제로 일어났는지** 판정한다.
-
-### 3.8 응답 헤더 — 추적 / 진단
-
-`apim-request-id`, `x-request-id`, `x-ms-request-id`, `x-ms-client-request-id`, `x-ms-region`, `azureml-model-session`, `openai-processing-ms`, `openai-model`, `x-envoy-upstream-service-time`
-
-지원 티켓을 열 때는 `apim-request-id` 또는 `x-request-id` 를 함께 제출한다.
-
----
-
-## 4. 샘플 코드 실행
-
-### 4.1 파일 구성
+### 3.2 파일 구성
 
 | 파일 | 역할 |
 |---|---|
@@ -395,7 +223,7 @@ sequenceDiagram
 
 헤더 덤프 로직이 공통이라 모듈로 분리했다. 스크립트만 복사하면 동작하지 않으니 `foundry_ptu_common.py` 를 함께 둔다.
 
-### 4.2 설치
+### 3.3 설치
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
@@ -405,7 +233,7 @@ az login   # DefaultAzureCredential 이 사용할 자격 증명
 
 Entra ID 인증에는 Foundry 리소스에 대한 **Cognitive Services OpenAI User** 이상의 역할이 필요하다.
 
-### 4.3 환경 변수
+### 3.4 환경 변수
 
 | 변수 | 필수 | 기본값 | 설명 |
 |---|---|---|---|
@@ -430,9 +258,13 @@ export FOUNDRY_STANDARD_DEPLOYMENT="gpt-image-2-paygo"
 export FOUNDRY_MODE="image"
 ```
 
-### 4.4 실행
+### 3.5 기본 호출 — `foundry-ptu-basic.py`
 
-**① 기본 호출 — 헤더로 현재 상태 파악**
+재시도도 spillover 도 하지 않고 한 번만 호출한다. 인증과 엔드포인트 설정이 맞는지, 어느 배포가 요청을 처리했는지 확인하는 기준선이다.
+
+```bash
+python foundry-ptu-basic.py
+```
 
 ```bash
 python foundry-ptu-basic.py
@@ -444,7 +276,60 @@ python foundry-ptu-basic.py
 - `x-ms-spillover-from-deployment` 가 있는가 → **배포 속성 스필오버가 동작 중**
 - `[스필오버 판정]` 섹션이 위 두 헤더를 사람이 읽을 문장으로 정리해 준다
 
-**② 429 재시도 — 부하를 걸어 실제로 유발**
+### 3.6 응답 헤더 읽기
+
+샘플 스크립트는 응답 헤더를 아래 세 그룹으로 나눠 출력하고, 분류에 없는 헤더도 `[기타]` 로 함께 찍는다.
+
+**스로틀링 / 재시도**
+
+| 헤더 | 의미 |
+|---|---|
+| `retry-after-ms` | **밀리초 단위 대기 시간.** 더 정밀하므로 우선 사용 |
+| `retry-after` | 초 단위 대기 시간 |
+| `x-ratelimit-remaining-requests` | 남은 요청 수 |
+| `x-ratelimit-remaining-tokens` | 남은 토큰 수 |
+| `x-ratelimit-limit-requests` / `-tokens` | 한도 |
+| `x-ratelimit-reset-requests` / `-tokens` | 한도 리셋까지 남은 시간 |
+
+> PTU 배포는 429 와 함께 `retry-after` **와** `retry-after-ms` 를 모두 돌려준다. 임의의 지수 백오프보다 이 값을 쓰는 편이 정확하다 — 버킷이 언제 비는지는 서비스만 알기 때문이다.
+
+**스필오버**
+
+| 헤더 | 의미 |
+|---|---|
+| `x-ms-deployment-name` | **실제로 요청을 처리한 배포 이름.** 스필오버됐다면 표준 배포 이름이 들어온다 |
+| `x-ms-spillover-from-deployment` | **존재 자체가 스필오버됐다는 뜻.** 값은 원래의 PTU 배포 이름 |
+| `x-ms-spillover-error` | 스필오버를 유발한 PTU 쪽 원본 상태 코드 (429 / 500 / 503 등). 스필오버 성공 여부와 무관하게 항상 붙는다 |
+
+`foundry-ptu-basic.py` 는 이 세 헤더만 보고 **서비스 측 스필오버가 실제로 일어났는지** 판정한다.
+
+**추적 / 진단**
+
+`apim-request-id`, `x-request-id`, `x-ms-request-id`, `x-ms-client-request-id`, `x-ms-region`, `azureml-model-session`, `openai-processing-ms`, `openai-model`, `x-envoy-upstream-service-time`
+
+지원 티켓을 열 때는 `apim-request-id` 또는 `x-request-id` 를 함께 제출한다.
+
+### 3.7 429 재시도 — `foundry-ptu-429-retry.py`
+
+PTU 는 사용률이 100% 에 닿으면 큐잉하지 않고 즉시 429 를 돌려주며, `retry-after-ms` 로 다시 올 시점을 알려준다. 사용률은 leaky bucket 으로 계산된다.
+
+```mermaid
+flowchart LR
+    Req["요청 도착"] --> Chk{"현재 사용률<br/>= 100% ?"}
+    Chk -->|"예"| R429["즉시 429 반환<br/>+ retry-after / retry-after-ms<br/>(큐잉하지 않음)"]
+    Chk -->|"아니오"| Est["비용 추정<br/>prompt 토큰(캐시 제외)<br/>+ max_tokens"]
+    Est --> Fill["버킷에 추가"]
+    Fill --> Run["요청 처리"]
+    Run --> Fix["실제 토큰으로 사용률 보정<br/>(추정보다 적으면 되돌림)"]
+    Bucket["버킷은 배포 PTU 수에<br/>비례해 지속적으로 배출<br/>(PTU 많을수록 빨리 빠짐)"] -.-> Fill
+
+    style R429 fill:#fee2e2,stroke:#dc2626
+    style Run fill:#dcfce7,stroke:#16a34a
+```
+
+> `max_tokens` 를 실제 생성량보다 크게 잡으면 버킷을 과하게 채워 **동시 처리량이 줄어든다.** 가능한 한 실제 값에 가깝게 지정할 것. 이 leaky bucket 동작과 429 대응 지침의 원문은 [프로덕션 운영 문서](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/provisioned-get-started)에 있다.
+
+`FOUNDRY_BURST` 로 동시 요청을 걸어 429 를 실제로 유발할 수 있다.
 
 ```bash
 FOUNDRY_BURST=20 FOUNDRY_MAX_ATTEMPTS=6 python foundry-ptu-429-retry.py
@@ -454,22 +339,65 @@ FOUNDRY_BURST=20 FOUNDRY_MAX_ATTEMPTS=6 python foundry-ptu-429-retry.py
 
 이 스크립트는 429 동작을 눈으로 보기 위한 것이다. 실제 용량 산정을 위한 부하 테스트에는 [azure-openai-benchmark](https://github.com/Azure/azure-openai-benchmark) 를 쓰고, 정상 상태 수치를 얻으려면 최소 10분 이상 돌린다.
 
-**③ 클라이언트 측 스필오버**
+### 3.8 스필오버 — `foundry-ptu-429-spillover.py`
+
+PTU 가 429 를 돌려줄 때 Standard(PayGo) 배포로 넘기는 두 가지 방식을 비교한다.
+
+**클라이언트 측 스필오버** — 앱이 직접 넘긴다. 표준 배포가 다른 리소스·리전에 있어도 되고, 전환 조건을 앱이 통제한다.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant App as 애플리케이션
+    participant PTU as PTU 배포
+    participant STD as PayGo 배포<br/>(다른 리소스/리전 가능)
+
+    App->>PTU: 추론 요청
+    PTU-->>App: 429 + retry-after-ms
+    Note over App: 상태 코드가 400/429/500/503 이면<br/>대기하지 않고 즉시 전환
+    App->>STD: 동일 요청 재전송
+    STD-->>App: 200 OK
+    Note over App: 두 응답의 헤더를 모두 로깅해<br/>PTU 소진 빈도를 추적
+```
 
 ```bash
-# PTU 실패 시 앱이 직접 PayGo 배포로 전환
 python foundry-ptu-429-spillover.py
+```
 
-# 서비스에 per-request 스필오버를 요청 (x-ms-spillover-deployment 헤더)
+**서비스 측 스필오버** — `x-ms-spillover-deployment` 헤더로 Foundry 에 위임한다. 왕복이 한 번이라 지연이 가장 적다.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant App as 애플리케이션
+    participant FE as Foundry 엔드포인트
+    participant PTU as gpt-image-2 (PTU)
+    participant STD as gpt-image-2-paygo (Standard)
+
+    App->>FE: POST /openai/v1/images/generations<br/>(선택) x-ms-spillover-deployment: gpt-image-2-paygo
+    FE->>PTU: 요청 전달 (PTU 우선)
+    PTU-->>FE: 429 (PTU 소진)
+    Note over FE: 배포 속성 spilloverDeploymentName 또는<br/>요청 헤더가 있으면 자동 전환
+    FE->>STD: 동일 요청 재전달
+    STD-->>FE: 200 OK
+    FE-->>App: 200 OK<br/>x-ms-deployment-name: gpt-image-2-paygo<br/>x-ms-spillover-from-deployment: gpt-image-2<br/>x-ms-spillover-error: 429
+```
+
+> 표준 배포마저 실패하면 표준 배포의 상태 코드와 본문이 그대로 반환된다. 이때도 `x-ms-spillover-from-deployment` 와 `x-ms-spillover-error` 는 남아 있어, "스필오버 실패"와 "표준 배포 직접 실패"를 구분할 수 있다.
+
+```bash
 FOUNDRY_SPILLOVER_MODE=header python foundry-ptu-429-spillover.py
+```
 
-# 두 방식을 나란히 비교
+두 방식을 나란히 돌려 비교하려면:
+
+```bash
 FOUNDRY_SPILLOVER_MODE=both FOUNDRY_BURST=20 python foundry-ptu-429-spillover.py
 ```
 
 > ⚠️ 배포 속성 `spilloverDeploymentName` 이 이미 설정돼 있으면 **배포 설정이 우선**하고 `x-ms-spillover-deployment` 헤더는 무시된다. 요청 단위로만 제어하려면 배포 속성을 비워 둔다.
 
-### 4.5 SDK 자동 재시도와의 관계
+### 3.9 SDK 자동 재시도와의 관계
 
 openai SDK 는 기본적으로 408/409/429/5xx 를 `retry-after` 를 존중하며 2회 재시도한다. 이 샘플들은 **매 시도의 헤더를 직접 보여주기 위해 `max_retries=0` 으로 꺼두었다.**
 
@@ -482,7 +410,27 @@ client = OpenAI(base_url=endpoint, api_key=token_provider, max_retries=5)
 client.with_options(max_retries=5).chat.completions.create(...)
 ```
 
-### 4.6 429 대응 전략 선택
+### 3.10 429 대응 전략 선택
+
+```mermaid
+flowchart TB
+    Start["PTU 배포 호출"] --> Code{"응답"}
+    Code -->|"200"| Done["완료<br/>PTU 시간당 비용만 발생"]
+    Code -->|"429 / 400(롱컨텍스트) / 500 / 503"| Strat{"대응 전략"}
+
+    Strat -->|"A. 재시도"| A["retry-after-ms 만큼 대기 후 재시도<br/>▸ PTU 로만 처리<br/>▸ 추가 비용 없음<br/>▸ 지연 증가<br/>▸ foundry-ptu-429-retry.py"]
+    Strat -->|"B. 서비스 측 스필오버"| B["Foundry 가 같은 리소스의<br/>표준 배포로 자동 라우팅<br/>▸ 왕복 1회, 지연 최소<br/>▸ 스필오버분은 토큰 과금<br/>▸ 배포 속성 또는 요청 헤더"]
+    Strat -->|"C. 클라이언트 측 스필오버"| C["앱이 직접 PayGo 배포 호출<br/>▸ 다른 리소스·리전 가능<br/>▸ 전환 조건을 앱이 통제<br/>▸ 왕복 2회<br/>▸ foundry-ptu-429-spillover.py"]
+
+    A --> Done
+    B --> Done
+    C --> Done
+
+    style Done fill:#dcfce7,stroke:#16a34a
+    style A fill:#eef2ff,stroke:#6366f1
+    style B fill:#fef3c7,stroke:#d97706
+    style C fill:#fae8ff,stroke:#a21caf
+```
 
 | 상황 | 권장 전략 |
 |---|---|
@@ -495,14 +443,3 @@ client.with_options(max_retries=5).chat.completions.create(...)
 
 - PTU 가 처리한 요청 → **시간당 PTU 비용만.** 추가 과금 없음
 - 스필오버되어 표준 배포가 처리한 요청 → 해당 모델·배포유형의 **입력 / 캐시 / 출력 토큰 요금**이 별도 발생
-
----
-
-## 5. 정리 — 과금 중단
-
-hourly billing 은 배포 생성 시점에 시작해 삭제 시점에 멈춘다. 리소스만 지우고 배포를 남기면 **리소스를 purge 할 때까지 과금이 계속된다.**
-
-1. 포털에서 **배포를 먼저 삭제**한다 (2.9 캡처).
-2. 리소스도 지운다면 **모든 배포를 지운 뒤** 리소스를 삭제한다.
-3. 삭제한 리소스를 **purge** 해 과금을 확실히 끊는다.
-4. **예약은 배포 삭제로 취소되지 않는다.** Azure Portal → Reservations 에서 별도로 취소/교환한다 (수수료 발생 가능).
