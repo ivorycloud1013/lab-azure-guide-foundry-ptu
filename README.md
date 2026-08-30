@@ -9,15 +9,15 @@ Microsoft Foundry 에서 [PTU(Provisioned Throughput Unit)](https://learn.micros
 0. [요약](#0-요약)
 1. [PTU 란](#1-ptu-란)
 2. [AI Portal 에서 PTU 배포하기](#2-ai-portal-에서-ptu-배포하기)
-3. [Sample Code](#3-Sample-Code)
+3. [Sample Code](#3-sample-code)
 4. [마무리](#4-마무리)
 
 ---
 
 ## 0. 요약
 
-- PTU 는 처리 용량(throughput)을 시간 단위로 구매하는 배포 방법으로, PTU 모델 배포가 완료되면 과금이 발생한다. **<span style="color:red">꼭, 미사용시에는 PTU 모델 배포를 삭제해야 한다.</span>** ([AI Portal 에서 PTU 배포하기](#2-ai-portal-에서-ptu-배포하기) 참고)
-- PTU 모델 배포의 처리 용량을 초과하는 요청은 Too Many Requests (429 HTTP Status Code) 로 즉시 응답한다. 이에 대한 retry 나 spillover 전략을 갖춰야 한다 ([Sample Code](#3-Sample-Code) 참고).
+- PTU 는 처리 용량(throughput)을 시간 단위로 구매하는 배포 방법으로, PTU 모델 배포가 완료되면 과금이 발생한다. **⚠️ 꼭, 미사용시에는 PTU 모델 배포를 삭제해야 한다.** ([AI Portal 에서 PTU 배포하기](#2-ai-portal-에서-ptu-배포하기) 참고)
+- PTU 모델 배포의 처리 용량을 초과하는 요청은 Too Many Requests (429 HTTP Status Code) 로 즉시 응답한다. 이에 대한 retry 나 spillover 전략을 갖춰야 한다 ([Sample Code](#3-sample-code) 참고).
 
 ---
 
@@ -86,6 +86,8 @@ PTU 는 배포된 PTU 수에 따라 hourly billing `$/PTU/hr` 으로 청구된�
 
 ## 2. AI Portal 에서 PTU 배포하기
 
+모델 배포를 만들고 삭제하려면 Foundry 리소스에 **Cognitive Services Contributor** 이상의 역할이 필요하다. 추론 요청만 한다면 [3. Sample Code](#3-sample-code) 의 `Cognitive Services OpenAI User` 로 충분하다.
+
 ### 2.1 Foundry project home에서 엔드포인트 확인
 
 ![Foundry home](images/foundry.png)
@@ -116,14 +118,14 @@ PTU 는 배포된 PTU 수에 따라 hourly billing `$/PTU/hr` 으로 청구된�
 ![PTU 및 요금](images/foundry-discover-models-gpt-image-2-deploy-settings-spill-over.png)
 
 요청한 PTU 의 location 정보를 포함한 배포 유형에 맞춰 입력값을 선택한다. 일반적으로 Model version 은 latest 로 하여 배포한다. 배포에 할당한 PTUs 는 직접 입력이 가능하며, 상단에 있는 [Calculate provisioned throughput unit capacity] 를 이용하여 모델별 용량을 계산하여 PTUs 를 할당할 수도 있다.
-모델 배포 엔드포인트는 정해진 capacity 를 초과한 요청에 대해서는 다른 엔드포인트로 [spillover](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/spillover-traffic-management) 할 수 있으며, 일반적으로는 Paygo 모델 배포를 지정한다.
+모델 배포 엔드포인트는 정해진 capacity 를 초과한 요청에 대해서는 다른 엔드포인트로 [spillover](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/spillover-traffic-management) 할 수 있다.
 
 | 입력값 | 설명 | 예시 |
 |---|---|---|
 | Deployment name | 모델 배포 이름 | `gpt-image-2` |
 | Deployment type | 모델 배포 유형 | **Global Provisioned Throughput** |
 | Model version | 모델 상세 버전 | `2026-04-21-private` |
-| Provisioned throughtput units | 배포에 할당할 PTU 수 | `100` |
+| Provisioned throughput units | 배포에 할당할 PTU 수 | `100` |
 | Traffic spillover | (Optional) Spillover 시 연결할 배포 이름, 지정안해도 됨 | `gpt-image-2-paygo` |
 | Guardrails | 모델 배포에 전후처리될 가드레일 instance | `DefaultV2` |
 | Pricing terms | 과금에 대한 description, 체크박스에 동의해야 [Deploy] 활성화 | `acknowledged` |
@@ -155,7 +157,7 @@ Language / Authentication method 를 고른 샘플이 나온다. 코드에 `endp
 
 ![삭제 진행](images/foundry-build-models-gpt-image-2-deleting.png)
 
-[delete] 을 눌러 모델 배포를 삭제한다. **<span style="color:red">과금은 모델 배포를 삭제해야 멈춘다. Foundry 리소스 삭제는 purge (영구삭제) 될 때까지 배포된 상태로 남아 있어 과금이 지속된다.</span>**
+[delete] 을 눌러 모델 배포를 삭제한다. **⚠️ 과금은 모델 배포를 삭제해야 멈춘다.** Foundry 리소스만 삭제하면 purge (영구삭제) 될 때까지 배포가 남아 있어 과금이 지속된다.
 
 ### 2.8 모니터링
 PTU 배포는 정해진 throughput 을 할당하여 운영하며 배포 엔드포인트에서 얼마나 throughput 을 소비하는지 `Azure Monitor` 를 통해 추적할 수 있다.
@@ -339,8 +341,7 @@ PTU 모델 배포가 429 HTTP status code 으로 반환할 경우 다른 모델 
 | `--prompt` | | | 프롬프트 |
 | `--spillover-mode` | |  | 미지정시, [PTU 모델 배포 속성](#331-ptu-모델-배포-속성으로-spillover-처리)에 따라 spillover 처리<br/>`header` 설정시, [Foundry project 서비스](#332-foundry-project-서비스에서-spillover-처리)에서 spillover 처리 <br/>`client` 설정시, [클라이언트](#333-클라이언트에서-spillover-처리)에서 spillover 처리 |
 
-응답 헤더는 [3.1.1](#311-응답-헤더-정보) 표에서 `PTU` 에 해당하는 값만 다룬다.
-
+응답 헤더는 [3.1.1](#311-응답-헤더-정보) 표에서 다룬다.
 
 #### 3.3.1. PTU 모델 배포 속성으로 spillover 처리
 
@@ -383,9 +384,14 @@ python foundry-model-ptu-deploy-429-spillover.py \
 
 본 방법은 클라이언트 - 서비스간 왕복이 1번 발생하여 latency 를 줄인다. 요청 헤더에 `x-ms-spillover-deployment` 을 붙인 요청에만 적용되므로, 워크로드별 최적화가 가능하다. Standard 모델 배포마저 실패하면 Standard 모델 배포의 상태 코드와 본문이 그대로 반환된다. 이때도 `x-ms-spillover-from-deployment` 와 `x-ms-spillover-error` 는 남아 있어 spillover 실패와 Standard 모델 배포 직접 실패를 구분할 수 있다.
 
+> [!NOTE]
+> PTU 모델 배포에 배포 속성 `spilloverDeploymentName` 이 이미 설정돼 있으면 **배포 설정이 우선**하고 요청 헤더는 무시된다([3.3.1](#331-ptu-모델-배포-속성으로-spillover-처리) 이 이긴다). 요청 단위로만 제어하려면 PTU 모델 배포의 [Traffic spillover] 를 비워 둔다.
+
+서비스는 overage 요청을 넘기기 전에 PTU 모델 배포로 보내는 것을 우선하므로, spillover 된 요청에는 그만큼의 지연이 더해질 수 있다.
+
 #### 3.3.3. 클라이언트에서 spillover 처리
 
-클라이언트가 PTU 배포의 응답을 보고 직접 전환한다. 200 이 아닌 HTTP status code 에 대해 standard 배포로 요청을 spillover 한다.
+클라이언트가 PTU 배포의 응답을 보고 직접 전환한다. 200 이 아닌 HTTP status code 이거나 응답 자체가 오지 않으면(연결 실패・타임아웃) standard 배포로 요청을 spillover 한다.
 
 ```mermaid
 sequenceDiagram
@@ -396,7 +402,7 @@ sequenceDiagram
 
     Client->>PTU: 추론 요청
     PTU-->>Client: Not OK + 응답 헤더 retry-after ・ retry-after-ms
-    Note over Client: Not OK 이면 spillver
+    Note over Client: Not OK 이면 spillover
     Client->>STD: 추론 요청 spillover
     STD-->>Client: 200 OK
 ```
