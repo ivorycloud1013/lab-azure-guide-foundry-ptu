@@ -7,7 +7,7 @@ retry-after-ms / retry-after 로 다시 올 시점을 알려준다. 그 값을 �
 
     python foundry-model-ptu-deploy-429-retry.py \\
         --endpoint https://<foundry-resource-subdomain>.openai.azure.com/openai/v1/ \\
-        --ptu-deployment gpt-image-2 \\
+        --deployment gpt-image-2 \\
         --burst 20 --max-attempts 6
 """
 
@@ -99,7 +99,7 @@ def parse_args():
         description="PTU 의 429 를 retry-after 헤더에 맞춰 재시도한다.")
     parser.add_argument("--endpoint", required=True,
                         help="모델 배포 엔드포인트. /openai/v1/ 까지 포함한 전체 URL")
-    parser.add_argument("--ptu-deployment", required=True, help="PTU 배포 이름")
+    parser.add_argument("--deployment", required=True, help="PTU 배포 이름")
     parser.add_argument("--auth", default=AUTH_ENTRA_ID, metavar="METHOD",
                         help=f"{AUTH_ENTRA_ID} (기본) | {AUTH_ENTRA_ID}=<스코프> | api-key=<키>")
     parser.add_argument("--api",
@@ -212,7 +212,7 @@ def run_worker(worker_id, endpoint, args):
     for attempt_index in range(args.max_attempts):
         attempt = attempt_index + 1
         try:
-            raw = call(client, args.ptu_deployment, args)
+            raw = call(client, args.deployment, args)
         except openai.APIStatusError as exc:
             dump_headers(f"worker {worker_id} 시도 {attempt}", exc.status_code, exc.response.headers)
 
@@ -241,7 +241,7 @@ def main():
     args = parse_args()
     endpoint = check_endpoint(args.endpoint)
     log.info("PTU 배포 %s | 동시 요청 %s | 최대 시도 %s",
-             args.ptu_deployment, args.burst, args.max_attempts)
+             args.deployment, args.burst, args.max_attempts)
 
     if args.burst == 1:
         results = [run_worker(1, endpoint, args)]
