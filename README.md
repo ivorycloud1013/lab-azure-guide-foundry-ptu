@@ -386,24 +386,19 @@ python foundry-model-ptu-deploy-429-spillover.py \
 
 #### 3.3.3. 클라이언트에서 spillover 처리
 
-클라이언트가 PTU 배포의 응답을 보고 직접 전환한다. **200 이 아닌 응답이면 상태 코드를 가리지 않고** `retry-after` 를 기다리지 않은 채 곧바로 Standard 배포로 같은 요청을 다시 보낸다.
-
-- 전환 조건과 대상을 앱이 정한다. 특정 상태 코드에서만 넘기도록 좁히는 것도 코드에서 바꾸면 된다
-- 대상을 앱이 고르므로 **다른 리소스·다른 리전**의 배포로도 넘길 수 있다. 이 스크립트는 단순화를 위해 `--endpoint` 하나만 쓴다
-- 요청이 두 번 나가므로 전환이 일어난 요청의 지연은 서비스 측보다 크다
-- 서비스가 관여하지 않으므로 응답에 `x-ms-spillover-*` 헤더가 붙지 않는다. 어느 배포가 처리했는지는 `x-ms-deployment-name` 으로 확인한다
+클라이언트가 PTU 배포의 응답을 보고 직접 전환한다. 200 이 아닌 HTTP status code 에 대해 standard 배포로 요청을 spillover 한다.
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant Client as 클라이언트<br/>(openai SDK)
-    participant PTU as PTU 배포
-    participant STD as Standard 배포<br/>(다른 리소스/리전 가능)
+    participant PTU as PTU<br/>Model Deployment
+    participant STD as Standard<br/>Model Deployment
 
     Client->>PTU: 추론 요청
-    PTU-->>Client: 429 + retry-after-ms
-    Note over Client: 400/429/500/503 이면<br/>대기하지 않고 즉시 전환
-    Client->>STD: 동일 요청 재전송
+    PTU-->>Client: Not OK + 응답 헤더 retry-after ・ retry-after-ms
+    Note over Client: Not OK 이면 spillver
+    Client->>STD: 추론 요청 spillover
     STD-->>Client: 200 OK
 ```
 
@@ -414,39 +409,51 @@ python foundry-model-ptu-deploy-429-spillover.py \
   --spillover-deployment gpt-image-2-paygo \
   --spillover-mode client
 ```
+본 방법은 Not OK 인 응답 HTTP status code 를 클라이언트의 워크로드 특성에 맞춰 직접 제어한다. Spillover 에 대해 Foundry project 서비스가 관여하지 않으므로 응답 헤더에 `x-ms-spillover-*` 가 붙지 않는다. 어느 배포가 처리했는지는 `x-ms-deployment-name` 으로 확인한다.
 
 ## 4. 마무리
 
 ### 4.1 미처리 응답 대응 전략
 
-PTU 배포가 200 을 돌려주지 못하는 경우는 429 만이 아니다. 사용률 소진(`429`), PTU 가 지원하지 않는 롱컨텍스트 요청(`400`), 서버 오류(`500` / `503`) 가 모두 여기 해당하며, 대응 방법은 세 갈래다.
+PTU 배포가 200 을 돌려주지 못하는 경우는 429 만이 아니다. 사용률 소진(`429`), PTU 가 지원하지 않는 롱컨텍스트 요청(`400`), 서버 오류(`500` / `503`) 가 모두 여기 해당한다.
+
+결국 **비용과 지연 중 무엇을 지킬 것인가**의 문제다. 추가 비용을 내지 않으려면 PTU 가 빌 때까지 기다려야 하므로 지연이 늘고, 지연을 막으려면 Standard 배포로 넘겨 토큰 요금을 내야 한다. 둘을 동시에 만족시킬 수는 없다.
 
 ```mermaid
-flowchart TB
-    Start["PTU 배포 호출"] --> Code{"응답"}
-    Code -->|"200"| Done["완료<br/>PTU 시간당 비용만 발생"]
-    Code -->|"429 / 400(롱컨텍스트) / 500 / 503"| Strat{"대응 전략"}
+flowchart LR
+    Req["모델 배포 요청"] --> Code{"응답"}
+    Code -->|"200"| Done["Done"]
+    Code -->|"non-200"| Trade{"무엇을 지킬 것인가"}
 
-    Strat -->|"A. 재시도"| A["retry-after-ms 만큼 대기 후 재시도<br/>▸ PTU 로만 처리<br/>▸ 추가 비용 없음<br/>▸ 지연 증가<br/>▸ foundry-model-ptu-deploy-429-retry.py"]
-    Strat -->|"B. 서비스 측 spillover"| B["Foundry 가 같은 리소스의<br/>Standard 배포로 자동 라우팅<br/>▸ 왕복 1회, 지연 최소<br/>▸ spillover 분은 토큰 과금<br/>▸ 배포 속성 또는 요청 헤더"]
-    Strat -->|"C. 클라이언트 측 spillover"| C["앱이 직접 Standard 배포 호출<br/>▸ 다른 리소스·리전 가능<br/>▸ 전환 조건을 앱이 통제<br/>▸ 왕복 2회<br/>▸ foundry-model-ptu-deploy-429-spillover.py"]
+    Trade -->|"추가 비용 없어야 함<br/>지연 감수"| Retry["PTU 로 retry<br/>retry-after-ms 만큼 대기"]
+    Trade -->|"지연 없어야 함<br/>토큰 비용 감수"| Spill{"spillover 방식"}
 
-    A --> Done
-    B --> Done
-    C --> Done
+    Spill -->|"워크로드별 최적화"| Header["요청 헤더<br/>x-ms-spillover-deployment"]
+    Spill -->|"클라이언트 직접 제어"| Client["앱이 Standard 배포 직접 호출"]
+    Spill -->|"static 한 배포 속성"| Prop["spilloverDeploymentName"]
+
+    Retry --> Done
+    Header --> Done
+    Client --> Done
+    Prop --> Done
 
     style Done fill:#dcfce7,stroke:#16a34a
-    style A fill:#eef2ff,stroke:#6366f1
-    style B fill:#fef3c7,stroke:#d97706
-    style C fill:#fae8ff,stroke:#a21caf
+    style Retry fill:#eef2ff,stroke:#6366f1
+    style Header fill:#fef3c7,stroke:#d97706
+    style Client fill:#fae8ff,stroke:#a21caf
+    style Prop fill:#e0f2fe,stroke:#0284c7
 ```
 
-| 상황 | 권장 전략 |
-|---|---|
-| 지연에 민감하고 비용 초과를 감수할 수 있다 | 서비스 측 spillover — 왕복 1회로 가장 빠르다. Global / Data Zone Provisioned 배포에는 기본으로 켜두길 권장 |
-| PTU 비용 안에서만 처리해야 한다 (배치성, 비대화형) | 재시도 — `retry-after-ms` 만큼 대기. 추가 토큰 비용 없음 |
-| Standard 백업이 다른 리소스·리전에 있거나, 전환 조건을 세밀하게 통제해야 한다 | 클라이언트 측 spillover |
-| 롱컨텍스트 요청이 `400` 으로 떨어진다 (예: gpt-4.1 계열 PTU 는 128K 미만만 지원) | spillover — 재시도해도 계속 `400` 이다 |
+각 선택지는 아래 실행 인자로 재현한다.
+
+| 지켜야 하는 것 | 선택 | 실행 |
+|---|---|---|
+| 추가 비용이 없어야 한다 | PTU 로 retry | `foundry-model-ptu-deploy-429-retry.py` |
+| 지연이 없어야 한다 · 워크로드별로 켜고 끈다 | 요청 헤더 spillover | `foundry-model-ptu-deploy-429-spillover.py --spillover-mode header` |
+| 지연이 없어야 한다 · 전환 조건을 앱이 통제한다 | 클라이언트 측 spillover | `foundry-model-ptu-deploy-429-spillover.py --spillover-mode client` |
+| 지연이 없어야 한다 · 배포 단위로 늘 켜 둔다 | 배포 속성 spillover | `foundry-model-ptu-deploy-429-spillover.py` (`--spillover-mode` 미지정) |
+
+롱컨텍스트 요청이 `400` 으로 떨어지는 경우(예: gpt-4.1 계열 PTU 는 128K 미만만 지원)는 retry 로 풀리지 않는다. 몇 번을 다시 보내도 같은 `400` 이므로 spillover 만이 답이다.
 
 과금은 요청을 처리한 배포를 따른다. PTU 가 처리한 요청은 시간당 PTU 비용만 발생하고 추가 과금이 없다. spillover 되어 Standard 배포가 처리한 요청은 해당 모델·배포 유형의 입력 / 캐시 / 출력 토큰 요금이 별도로 발생한다.
 
