@@ -269,23 +269,32 @@ python foundry-model-deploy-basic.py \
 
 ### 3.2 `foundry-model-ptu-deploy-429-retry.py`
 
-PTU 배포가 돌려준 429 를 클라이언트에서 재시도하는 흐름을 다룬다. PTU 는 사용률이 100% 에 닿으면 큐잉하지 않고 즉시 429 를 돌려주며, `retry-after-ms` 로 다시 올 시점을 알려준다. 사용률은 아래와 같이 leaky bucket 으로 계산된다.
+PTU 배포가 돌려준 429 를 클라이언트에서 재시도하는 흐름을 다룬다. PTU 는 사용률이 100% 에 닿으면 요청을 큐잉하지 않고 즉시 429 를 돌려주며, 응답 헤더의 `retry-after-ms` 로 다시 요청할 시점을 알려준다.
 
 ```mermaid
-flowchart LR
-    Req["요청 도착"] --> Chk{"현재 사용률<br/>= 100% ?"}
-    Chk -->|"예"| R429["즉시 429 반환<br/>+ retry-after / retry-after-ms<br/>(큐잉하지 않음)"]
-    Chk -->|"아니오"| Est["비용 추정<br/>prompt 토큰(캐시 제외)<br/>+ max_tokens"]
-    Est --> Fill["버킷에 추가"]
-    Fill --> Run["요청 처리"]
-    Run --> Fix["실제 토큰으로 사용률 보정<br/>(추정보다 적으면 되돌림)"]
-    Bucket["버킷은 배포 PTU 수에<br/>비례해 지속적으로 배출<br/>(PTU 많을수록 빨리 빠짐)"] -.-> Fill
+sequenceDiagram
+    autonumber
+    participant Client as 클라이언트<br/>(openai SDK)
+    participant Entra as Microsoft Entra ID
+    participant EP as Foundry project<br/>엔드포인트
+    participant Deployment as PTU model deployment<br/>엔드포인트
 
-    style R429 fill:#fee2e2,stroke:#dc2626
-    style Run fill:#dcfce7,stroke:#16a34a
+    Client->>Entra: Authentication
+    Entra-->>Client: Bearer token — 만료 시 자동 갱신
+    Client->>EP: 추론 요청<br/>Authorization: Bearer / model = 배포 이름
+    EP->>Deployment: Model deployment로 라우팅
+    Deployment-->>EP: 429 Too Many Requests
+    EP-->>Client: 429 + retry-after-ms
+    Note over Client: retry-after-ms 만큼 대기<br/>헤더가 없으면 지수 백오프
+    Client->>EP: 동일 요청 재전송
+    EP->>Deployment: Model deployment로 라우팅
+    Deployment-->>EP: 200 OK
+    EP-->>Client: 200 OK
 ```
 
-`max_tokens` 를 실제 생성량보다 크게 잡으면 버킷을 과하게 채워 동시 처리량이 줄어든다. leaky bucket 동작과 429 대응 지침의 원문은 [프로덕션 운영 문서](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/provisioned-get-started)에 있다.
+429 가 이어지면 `--max-attempts` 회까지 위 대기와 재전송을 반복한다.
+
+> `max_tokens` 는 PTU 사용률 추정에 그대로 반영된다. 실제 생성량보다 크게 잡으면 사용률이 과하게 차올라 동시 처리량이 줄어든다. ([프로덕션 운영 문서](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/provisioned-get-started))
 
 Python 코드의 입력 매개변수에 대한 설명은 아래와 같다.
 
