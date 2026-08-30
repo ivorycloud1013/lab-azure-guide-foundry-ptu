@@ -206,13 +206,10 @@ Microsoft Foundry 에 배포된 모델 엔드포인트에 대한 추론 요청�
 | `--endpoint` | Yes | — | 모델 배포 엔드포인트. `/openai/v1/` 까지 포함한 전체 URL |
 | `--deployment` | Yes | — | 모델 배포 이름 |
 | `--api` | | `images.generate` | `images.generate` \| `images.edit` \| `chat.completions` |
-| `--api-key` | | (없음) | 지정하면 키 인증, 생략하면 Entra ID |
-| `--token-scope` | | `https://ai.azure.com/.default` | classic 데이터플레인은 `https://cognitiveservices.azure.com/.default` |
+| `--auth` | | `entra-id` | `entra-id` \| `entra-id=<스코프>` \| `api-key=<키>` |
 | `--prompt` | | `--api` 별 기본값 | 프롬프트 |
 | `--image` | `images.edit` 시 ✅ | — | 편집할 입력 이미지 경로 |
-| `--image-size` | | `1024x1024` | `images.*` 전용 |
 | `--output` | | (저장 안 함) | `images.*` 결과를 저장할 경로 |
-| `--max-tokens` | | `256` | `chat.completions` 전용. **PTU 사용률 추정에 직접 반영**되므로 실제 생성량에 맞춘다 |
 
 ```bash
 # 이미지 생성
@@ -307,12 +304,9 @@ PTU 는 사용률이 100% 에 닿으면 큐잉하지 않고 즉시 429 를 돌�
 |---|---|---|---|
 | `--endpoint` | ✅ | — | 모델 배포 엔드포인트. `/openai/v1/` 까지 포함한 전체 URL |
 | `--ptu-deployment` | ✅ | — | PTU 배포 이름 |
-| `--api-key` | | (없음) | 지정하면 키 인증, 생략하면 Entra ID |
-| `--token-scope` | | `https://ai.azure.com/.default` | classic 데이터플레인은 `https://cognitiveservices.azure.com/.default` |
+| `--auth` | | `entra-id` | `entra-id` \| `entra-id=<스코프>` \| `api-key=<키>` |
 | `--api` | | `images.generate` | `images.generate` \| `chat.completions` |
 | `--prompt` | | `--api` 별 기본값 | 프롬프트 |
-| `--image-size` | | `1024x1024` | `images.*` 전용 |
-| `--max-tokens` | | `256` | `chat.completions` 전용. **PTU 사용률 추정에 직접 반영**되므로 실제 생성량에 맞춘다 |
 | `--max-attempts` | | `5` | 요청 하나당 최대 시도 횟수 |
 | `--burst` | | `1` | 동시 요청 수. 2 이상이면 429 를 실제로 유발할 수 있다 |
 
@@ -356,12 +350,9 @@ PTU 가 429 를 돌려줄 때 Standard(PayGo) 배포로 넘기는 두 가지 방
 | `--standard-deployment` | ✅ | — | 스필오버 대상 Standard(PayGo) 배포 이름 |
 | `--endpoint` | ✅ | — | 모델 배포 엔드포인트. `/openai/v1/` 까지 포함한 전체 URL |
 | `--ptu-deployment` | ✅ | — | PTU 배포 이름 |
-| `--api-key` | | (없음) | 지정하면 키 인증, 생략하면 Entra ID |
-| `--token-scope` | | `https://ai.azure.com/.default` | classic 데이터플레인은 `https://cognitiveservices.azure.com/.default` |
+| `--auth` | | `entra-id` | `entra-id` \| `entra-id=<스코프>` \| `api-key=<키>` |
 | `--api` | | `images.generate` | `images.generate` \| `chat.completions` |
 | `--prompt` | | `--api` 별 기본값 | 프롬프트 |
-| `--image-size` | | `1024x1024` | `images.*` 전용 |
-| `--max-tokens` | | `256` | `chat.completions` 전용. **PTU 사용률 추정에 직접 반영**되므로 실제 생성량에 맞춘다 |
 | `--standard-endpoint` | | `--endpoint` 와 동일 | 표준 배포가 **다른 리소스**에 있을 때만 지정. 역시 전체 URL |
 | `--spillover-mode` | | `client` | `client` \| `header` \| `both` |
 

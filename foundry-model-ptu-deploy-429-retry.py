@@ -24,8 +24,16 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 log = logging.getLogger("retry")
 
 DEFAULT_TOKEN_SCOPE = "https://ai.azure.com/.default"
+
+AUTH_ENTRA_ID = "entra-id"
+AUTH_ENTRA_ID_PREFIX = AUTH_ENTRA_ID + "="
+AUTH_API_KEY_PREFIX = "api-key="
 DEFAULT_IMAGE_PROMPT = "A cute baby polar bear"
 DEFAULT_CHAT_PROMPT = "Explain the purpose of an API in one sentence."
+IMAGE_SIZE = "1024x1024"
+# PTU 사용률은 prompt 토큰 + max_tokens 추정치로 계산된다.
+# 실제 생성량에 가깝게 잡아야 동시 처리량이 올라간다.
+MAX_OUTPUT_TOKENS = 256
 
 API_IMAGES_GENERATE = "images.generate"
 API_CHAT_COMPLETIONS = "chat.completions"
@@ -60,32 +68,49 @@ HEADER_GROUPS = {
 }
 
 
+def resolve_auth(value, parser):
+    """--auth 값을 (api_key, token_scope) 로 푼다. Entra ID 면 api_key 는 None.
+
+    entra-id            기본 스코프로 Entra ID 인증 (기본값)
+    entra-id=<스코프>    스코프를 지정해 Entra ID 인증
+    api-key=<키>        키로 인증
+    """
+    if value == AUTH_ENTRA_ID:
+        return None, DEFAULT_TOKEN_SCOPE
+    if value.startswith(AUTH_ENTRA_ID_PREFIX):
+        scope = value[len(AUTH_ENTRA_ID_PREFIX):]
+        if not scope:
+            parser.error(f"--auth {AUTH_ENTRA_ID_PREFIX} 뒤에 토큰 스코프를 지정해야 한다")
+        return None, scope
+    if value.startswith(AUTH_API_KEY_PREFIX):
+        key = value[len(AUTH_API_KEY_PREFIX):]
+        if not key:
+            parser.error(f"--auth {AUTH_API_KEY_PREFIX} 뒤에 키를 지정해야 한다")
+        return key, DEFAULT_TOKEN_SCOPE
+    parser.error(f"--auth 는 {AUTH_ENTRA_ID}, {AUTH_ENTRA_ID_PREFIX}<스코프>, "
+                 f"{AUTH_API_KEY_PREFIX}<키> 중 하나여야 한다")
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="PTU 의 429 를 retry-after 헤더에 맞춰 재시도한다.")
     parser.add_argument("--endpoint", required=True,
                         help="모델 배포 엔드포인트. /openai/v1/ 까지 포함한 전체 URL")
     parser.add_argument("--ptu-deployment", required=True, help="PTU 배포 이름")
-    parser.add_argument("--api-key",
-                        help="지정하면 키 인증. 생략하면 Entra ID (권장). "
-                             "커맨드라인의 키는 프로세스 목록에 노출된다")
-    parser.add_argument("--token-scope", default=DEFAULT_TOKEN_SCOPE,
-                        help=f"Entra ID 토큰 스코프 (기본 {DEFAULT_TOKEN_SCOPE})")
+    parser.add_argument("--auth", default=AUTH_ENTRA_ID, metavar="METHOD",
+                        help=f"{AUTH_ENTRA_ID} (기본) | {AUTH_ENTRA_ID}=<스코프> | api-key=<키>")
     parser.add_argument("--api",
                         choices=(API_IMAGES_GENERATE, API_CHAT_COMPLETIONS),
                         default=API_IMAGES_GENERATE,
                         help=f"호출할 API (기본 {API_IMAGES_GENERATE})")
     parser.add_argument("--prompt", help="프롬프트 (기본값은 --api 별로 다름)")
-    parser.add_argument("--image-size", default="1024x1024",
-                        help="images.generate 전용 (기본 1024x1024)")
-    parser.add_argument("--max-tokens", type=int, default=256,
-                        help="chat.completions 전용. PTU 사용률 추정에 직접 반영된다 (기본 256)")
     parser.add_argument("--max-attempts", type=int, default=5,
                         help="요청 하나당 최대 시도 횟수 (기본 5)")
     parser.add_argument("--burst", type=int, default=1,
                         help="동시 요청 수. 2 이상이면 429 를 실제로 유발할 수 있다 (기본 1)")
 
     args = parser.parse_args()
+    args.api_key, args.token_scope = resolve_auth(args.auth, parser)
     if not args.prompt:
         args.prompt = (DEFAULT_IMAGE_PROMPT if args.api == API_IMAGES_GENERATE
                        else DEFAULT_CHAT_PROMPT)
@@ -115,10 +140,10 @@ def call(client, deployment, args):
         return client.chat.completions.with_raw_response.create(
             model=deployment,
             messages=[{"role": "user", "content": args.prompt}],
-            max_completion_tokens=args.max_tokens,
+            max_completion_tokens=MAX_OUTPUT_TOKENS,
         )
     return client.images.with_raw_response.generate(
-        model=deployment, prompt=args.prompt, n=1, size=args.image_size,
+        model=deployment, prompt=args.prompt, n=1, size=IMAGE_SIZE,
     )
 
 
