@@ -182,7 +182,7 @@ def report_spillover(headers):
     elif served:
         log.info("스필오버 없음. %s 가 직접 처리했다", served)
     else:
-        log.info("스필오버 헤더가 없다. 배포에 spilloverDeploymentName 이 없거나 PTU 에 여유가 있다")
+        log.info("스필오버 없음")
 
 
 def run_standard_fallback(client, args):

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Foundry 모델 배포 엔드포인트를 호출하는 기본 로직.
 
-한 번만 호출하고 응답 헤더를 전부 출력한다. 재시도도 spillover 도 하지 않는다.
+한 번만 호출하고 응답 헤더를 전부 출력한다. 재시도는 하지 않는다.
 인증과 엔드포인트 설정이 맞는지, 어느 배포가 요청을 처리했는지 보는 기준선이다.
 
 --api 로 호출할 API 를 고른다.
@@ -57,10 +57,8 @@ HEADER_GROUPS = {
         "x-ratelimit-remaining-requests", "x-ratelimit-remaining-tokens",
         "x-ratelimit-reset-requests", "x-ratelimit-reset-tokens",
     ),
-    "spillover": (
+    "deployment": (
         "x-ms-deployment-name",
-        "x-ms-spillover-from-deployment",
-        "x-ms-spillover-error",
     ),
     "trace": (
         "apim-request-id", "x-request-id", "x-ms-request-id", "x-ms-client-request-id",
@@ -183,21 +181,6 @@ def dump_headers(title, status, headers):
             print(f"  {name}: {value}")
 
 
-def report_spillover(headers):
-    """서비스 측 스필오버가 일어났는지 헤더 세 개로 판정한다."""
-    lowered = {key.lower(): value for key, value in headers.items()}
-    served = lowered.get("x-ms-deployment-name")
-    spilled_from = lowered.get("x-ms-spillover-from-deployment")
-
-    if spilled_from:
-        log.info("서비스 측 스필오버 발생: %s -> %s (원본 코드 %s)",
-                 spilled_from, served, lowered.get("x-ms-spillover-error"))
-    elif served:
-        log.info("스필오버 없음. %s 가 직접 처리했다", served)
-    else:
-        log.info("스필오버 헤더가 없다. 배포에 spilloverDeploymentName 이 없거나 PTU 에 여유가 있다")
-
-
 def report_result(payload, args):
     """응답 본문을 요약하고, images.* 는 --output-image 경로에 저장한다."""
     if args.api not in IMAGE_APIS:
@@ -233,7 +216,6 @@ def main():
         raise SystemExit(1)
 
     dump_headers("응답", raw.http_response.status_code, raw.headers)
-    report_spillover(raw.headers)
     report_result(raw.parse(), args)
 
 
