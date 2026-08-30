@@ -5,7 +5,7 @@ PTU 는 사용률이 100% 에 닿으면 큐잉하지 않고 즉시 429 를 돌�
 retry-after-ms / retry-after 로 다시 올 시점을 알려준다. 그 값을 우선 쓰고,
 헤더가 없을 때만 지수 백오프로 폴백한다.
 
-    python foundry-ptu-429-retry.py \\
+    python foundry-model-ptu-deploy-429-retry.py \\
         --endpoint https://<resource>.openai.azure.com \\
         --ptu-deployment gpt-image-2 \\
         --burst 20 --max-attempts 6
@@ -26,6 +26,9 @@ log = logging.getLogger("retry")
 DEFAULT_TOKEN_SCOPE = "https://ai.azure.com/.default"
 DEFAULT_IMAGE_PROMPT = "A cute baby polar bear"
 DEFAULT_CHAT_PROMPT = "Explain the purpose of an API in one sentence."
+
+API_IMAGES_GENERATE = "images.generate"
+API_CHAT_COMPLETIONS = "chat.completions"
 
 # 재시도 대상 상태 코드. 그 외에는 즉시 중단한다.
 RETRYABLE = frozenset({408, 429, 500, 502, 503, 504})
@@ -68,12 +71,15 @@ def parse_args():
                              "커맨드라인의 키는 프로세스 목록에 노출된다")
     parser.add_argument("--token-scope", default=DEFAULT_TOKEN_SCOPE,
                         help=f"Entra ID 토큰 스코프 (기본 {DEFAULT_TOKEN_SCOPE})")
-    parser.add_argument("--mode", choices=("image", "chat"), default="image",
-                        help="호출할 API 종류 (기본 image)")
-    parser.add_argument("--prompt", help="프롬프트 (기본값은 mode 별로 다름)")
-    parser.add_argument("--image-size", default="1024x1024", help="image 모드 전용 (기본 1024x1024)")
+    parser.add_argument("--api",
+                        choices=(API_IMAGES_GENERATE, API_CHAT_COMPLETIONS),
+                        default=API_IMAGES_GENERATE,
+                        help=f"호출할 API (기본 {API_IMAGES_GENERATE})")
+    parser.add_argument("--prompt", help="프롬프트 (기본값은 --api 별로 다름)")
+    parser.add_argument("--image-size", default="1024x1024",
+                        help="images.generate 전용 (기본 1024x1024)")
     parser.add_argument("--max-tokens", type=int, default=256,
-                        help="chat 모드 전용. PTU 사용률 추정에 직접 반영된다 (기본 256)")
+                        help="chat.completions 전용. PTU 사용률 추정에 직접 반영된다 (기본 256)")
     parser.add_argument("--max-attempts", type=int, default=5,
                         help="요청 하나당 최대 시도 횟수 (기본 5)")
     parser.add_argument("--burst", type=int, default=1,
@@ -81,7 +87,8 @@ def parse_args():
 
     args = parser.parse_args()
     if not args.prompt:
-        args.prompt = DEFAULT_IMAGE_PROMPT if args.mode == "image" else DEFAULT_CHAT_PROMPT
+        args.prompt = (DEFAULT_IMAGE_PROMPT if args.api == API_IMAGES_GENERATE
+                       else DEFAULT_CHAT_PROMPT)
     return args
 
 
@@ -103,7 +110,7 @@ def build_client(endpoint, api_key, token_scope):
 
 def call(client, deployment, args):
     """with_raw_response 로 호출해 성공·실패 모두 원본 헤더를 얻는다."""
-    if args.mode == "chat":
+    if args.api == API_CHAT_COMPLETIONS:
         return client.chat.completions.with_raw_response.create(
             model=deployment,
             messages=[{"role": "user", "content": args.prompt}],

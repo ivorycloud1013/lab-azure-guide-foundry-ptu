@@ -10,7 +10,7 @@ header  x-ms-spillover-deployment 헤더로 Foundry 에 위임한다. 왕복이 
 배포 속성 spilloverDeploymentName 이 이미 설정돼 있으면 배포 설정이 우선하고
 header 방식은 무시된다.
 
-    python foundry-ptu-429-spillover.py \\
+    python foundry-model-ptu-deploy-429-spillover.py \\
         --endpoint https://<resource>.openai.azure.com \\
         --ptu-deployment gpt-image-2 \\
         --standard-deployment gpt-image-2-paygo \\
@@ -29,6 +29,9 @@ log = logging.getLogger("spillover")
 DEFAULT_TOKEN_SCOPE = "https://ai.azure.com/.default"
 DEFAULT_IMAGE_PROMPT = "A cute baby polar bear"
 DEFAULT_CHAT_PROMPT = "Explain the purpose of an API in one sentence."
+
+API_IMAGES_GENERATE = "images.generate"
+API_CHAT_COMPLETIONS = "chat.completions"
 
 # 서비스 측 per-request 스필오버를 요청하는 헤더.
 SPILLOVER_HEADER = "x-ms-spillover-deployment"
@@ -73,16 +76,20 @@ def parse_args():
                              "커맨드라인의 키는 프로세스 목록에 노출된다")
     parser.add_argument("--token-scope", default=DEFAULT_TOKEN_SCOPE,
                         help=f"Entra ID 토큰 스코프 (기본 {DEFAULT_TOKEN_SCOPE})")
-    parser.add_argument("--mode", choices=("image", "chat"), default="image",
-                        help="호출할 API 종류 (기본 image)")
-    parser.add_argument("--prompt", help="프롬프트 (기본값은 mode 별로 다름)")
-    parser.add_argument("--image-size", default="1024x1024", help="image 모드 전용 (기본 1024x1024)")
+    parser.add_argument("--api",
+                        choices=(API_IMAGES_GENERATE, API_CHAT_COMPLETIONS),
+                        default=API_IMAGES_GENERATE,
+                        help=f"호출할 API (기본 {API_IMAGES_GENERATE})")
+    parser.add_argument("--prompt", help="프롬프트 (기본값은 --api 별로 다름)")
+    parser.add_argument("--image-size", default="1024x1024",
+                        help="images.generate 전용 (기본 1024x1024)")
     parser.add_argument("--max-tokens", type=int, default=256,
-                        help="chat 모드 전용. PTU 사용률 추정에 직접 반영된다 (기본 256)")
+                        help="chat.completions 전용. PTU 사용률 추정에 직접 반영된다 (기본 256)")
 
     args = parser.parse_args()
     if not args.prompt:
-        args.prompt = DEFAULT_IMAGE_PROMPT if args.mode == "image" else DEFAULT_CHAT_PROMPT
+        args.prompt = (DEFAULT_IMAGE_PROMPT if args.api == API_IMAGES_GENERATE
+                       else DEFAULT_CHAT_PROMPT)
     return args
 
 
@@ -104,7 +111,7 @@ def build_client(endpoint, api_key, token_scope):
 
 def call(client, deployment, args, extra_headers=None):
     """with_raw_response 로 호출해 성공·실패 모두 원본 헤더를 얻는다."""
-    if args.mode == "chat":
+    if args.api == API_CHAT_COMPLETIONS:
         return client.chat.completions.with_raw_response.create(
             model=deployment,
             messages=[{"role": "user", "content": args.prompt}],
