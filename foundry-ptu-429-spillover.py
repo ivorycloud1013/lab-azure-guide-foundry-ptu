@@ -1,236 +1,220 @@
 #!/usr/bin/env python3
-"""PTU 가 429 를 돌려줄 때 표준(PayGo) 배포로 넘기는 두 가지 방식을 보여준다.
+"""PTU 가 429 를 돌려줄 때 Standard(PayGo) 배포로 넘기는 두 가지 방식.
 
-방식 1 — client (기본값)
-    클라이언트가 직접 넘긴다. PTU 배포를 호출해 400/429/500/503 을 받으면
-    기다리지 않고 곧바로 표준 배포로 같은 요청을 다시 보낸다. 표준 배포가
-    다른 리소스/리전에 있어도 되고, 전환 여부와 조건을 애플리케이션이 전부
-    통제한다는 게 장점이다.
+client  기본값. 앱이 직접 넘긴다. PTU 가 400/429/500/503 을 돌려주면 기다리지
+        않고 곧바로 표준 배포로 같은 요청을 다시 보낸다. 표준 배포가 다른
+        리소스·리전에 있어도 되고 전환 조건을 앱이 통제한다.
+header  x-ms-spillover-deployment 헤더로 Foundry 에 위임한다. 왕복이 한 번이라
+        지연이 가장 적다. 응답에 x-ms-spillover-from-deployment 가 실려 온다.
 
-방식 2 — header
-    서비스가 대신 넘긴다. 요청에 ``x-ms-spillover-deployment`` 헤더를 붙이면
-    Foundry 가 PTU 실패를 감지해 같은 리소스 안의 표준 배포로 라우팅한다.
-    왕복이 한 번뿐이라 지연이 가장 적다. 응답에는 ``x-ms-spillover-from-deployment``
-    와 ``x-ms-spillover-error`` 가 실려 온다.
+배포 속성 spilloverDeploymentName 이 이미 설정돼 있으면 배포 설정이 우선하고
+header 방식은 무시된다.
 
-    주의: 배포 속성 spilloverDeploymentName 이 이미 설정돼 있으면 배포 설정이
-    우선하며 이 헤더는 무시된다.
-
-두 방식 모두 매 호출의 응답 헤더를 전부 출력한다.
-
-사용법:
-    python foundry-ptu-429-spillover.py
-    FOUNDRY_SPILLOVER_MODE=header python foundry-ptu-429-spillover.py
-    FOUNDRY_SPILLOVER_MODE=both FOUNDRY_BURST=20 python foundry-ptu-429-spillover.py
+    python foundry-ptu-429-spillover.py \\
+        --endpoint https://<resource>.openai.azure.com \\
+        --ptu-deployment gpt-image-2 \\
+        --standard-deployment gpt-image-2-paygo \\
+        --spillover-mode header
 """
 
-from __future__ import annotations
+import argparse
+import logging
 
-import os
-from dataclasses import dataclass
+import openai
+from openai import OpenAI
 
-from foundry_ptu_common import (
-    PRINT_LOCK,
-    SPILLOVER_STATUS_CODES,
-    CallResult,
-    ConfigError,
-    Settings,
-    build_client,
-    call_deployment,
-    describe_payload,
-    fail,
-    load_settings,
-    positive_int_env,
-    print_response_headers,
-    print_spillover_verdict,
-    run_workers,
-)
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+log = logging.getLogger("spillover")
 
-# ---------------------------------------------------------------------------
-# 상수
-# ---------------------------------------------------------------------------
+DEFAULT_TOKEN_SCOPE = "https://ai.azure.com/.default"
+DEFAULT_IMAGE_PROMPT = "A cute baby polar bear"
+DEFAULT_CHAT_PROMPT = "Explain the purpose of an API in one sentence."
 
-#: 서비스 측 per-request 스필오버를 요청하는 헤더 이름.
-SPILLOVER_REQUEST_HEADER = "x-ms-spillover-deployment"
+# 서비스 측 per-request 스필오버를 요청하는 헤더.
+SPILLOVER_HEADER = "x-ms-spillover-deployment"
 
-MODE_CLIENT = "client"
-MODE_HEADER = "header"
-MODE_BOTH = "both"
-SUPPORTED_SPILLOVER_MODES = (MODE_CLIENT, MODE_HEADER, MODE_BOTH)
+# 스필오버를 유발하는 상태 코드. 429 는 PTU 소진, 400 은 롱컨텍스트, 500/503 은 서버 오류.
+SPILLOVER_CODES = frozenset({400, 429, 500, 503})
 
-DEFAULT_BURST_SIZE = 1
-
-
-@dataclass(frozen=True)
-class SpilloverOutcome:
-    """워커 하나가 수행한 스필오버 시나리오 결과."""
-
-    worker_id: int
-    mode: str
-    primary: CallResult
-    fallback: CallResult | None
-
-    @property
-    def final(self) -> CallResult:
-        """최종적으로 사용자에게 돌려줄 응답."""
-        return self.fallback if self.fallback is not None else self.primary
-
-    @property
-    def did_fall_back(self) -> bool:
-        return self.fallback is not None
+HEADER_GROUPS = {
+    "throttling": (
+        "retry-after", "retry-after-ms",
+        "x-ratelimit-limit-requests", "x-ratelimit-limit-tokens",
+        "x-ratelimit-remaining-requests", "x-ratelimit-remaining-tokens",
+        "x-ratelimit-reset-requests", "x-ratelimit-reset-tokens",
+    ),
+    "spillover": (
+        "x-ms-deployment-name",
+        "x-ms-spillover-from-deployment",
+        "x-ms-spillover-error",
+    ),
+    "trace": (
+        "apim-request-id", "x-request-id", "x-ms-request-id", "x-ms-client-request-id",
+        "x-ms-region", "azureml-model-session", "openai-processing-ms", "openai-model",
+        "x-envoy-upstream-service-time",
+    ),
+}
 
 
-def _resolve_spillover_mode() -> str:
-    mode = os.environ.get("FOUNDRY_SPILLOVER_MODE", MODE_CLIENT).strip().lower()
-    if mode not in SUPPORTED_SPILLOVER_MODES:
-        raise ConfigError(
-            f"FOUNDRY_SPILLOVER_MODE 는 {SUPPORTED_SPILLOVER_MODES} 중 하나여야 합니다 "
-            f"(받은 값: {mode!r})."
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="PTU 429 를 Standard 배포로 넘기는 두 방식을 비교한다.")
+    parser.add_argument("--endpoint", required=True,
+                        help="Foundry 리소스 엔드포인트. /openai/v1/ 는 자동으로 붙인다")
+    parser.add_argument("--ptu-deployment", required=True, help="PTU 배포 이름")
+    parser.add_argument("--standard-deployment", required=True,
+                        help="스필오버 대상 Standard(PayGo) 배포 이름")
+    parser.add_argument("--standard-endpoint",
+                        help="표준 배포가 다른 리소스에 있을 때만 지정 (기본: --endpoint 와 동일)")
+    parser.add_argument("--spillover-mode", choices=("client", "header", "both"), default="client",
+                        help="client=앱이 직접 전환, header=서비스에 위임, both=둘 다 (기본 client)")
+    parser.add_argument("--api-key",
+                        help="지정하면 키 인증. 생략하면 Entra ID (권장). "
+                             "커맨드라인의 키는 프로세스 목록에 노출된다")
+    parser.add_argument("--token-scope", default=DEFAULT_TOKEN_SCOPE,
+                        help=f"Entra ID 토큰 스코프 (기본 {DEFAULT_TOKEN_SCOPE})")
+    parser.add_argument("--mode", choices=("image", "chat"), default="image",
+                        help="호출할 API 종류 (기본 image)")
+    parser.add_argument("--prompt", help="프롬프트 (기본값은 mode 별로 다름)")
+    parser.add_argument("--image-size", default="1024x1024", help="image 모드 전용 (기본 1024x1024)")
+    parser.add_argument("--max-tokens", type=int, default=256,
+                        help="chat 모드 전용. PTU 사용률 추정에 직접 반영된다 (기본 256)")
+
+    args = parser.parse_args()
+    if not args.prompt:
+        args.prompt = DEFAULT_IMAGE_PROMPT if args.mode == "image" else DEFAULT_CHAT_PROMPT
+    return args
+
+
+def base_url(raw):
+    """엔드포인트는 /openai/v1/ 로 끝나야 한다. 아니면 404 가 난다."""
+    url = raw.rstrip("/")
+    return url + "/" if url.endswith("/openai/v1") else url + "/openai/v1/"
+
+
+def build_client(endpoint, api_key, token_scope):
+    """SDK 자동 재시도를 꺼서 전환 시점을 이 스크립트가 직접 제어한다."""
+    if api_key:
+        credential = api_key
+    else:
+        from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+        credential = get_bearer_token_provider(DefaultAzureCredential(), token_scope)
+    return OpenAI(base_url=endpoint, api_key=credential, max_retries=0)
+
+
+def call(client, deployment, args, extra_headers=None):
+    """with_raw_response 로 호출해 성공·실패 모두 원본 헤더를 얻는다."""
+    if args.mode == "chat":
+        return client.chat.completions.with_raw_response.create(
+            model=deployment,
+            messages=[{"role": "user", "content": args.prompt}],
+            max_completion_tokens=args.max_tokens,
+            extra_headers=extra_headers,
         )
-    return mode
-
-
-# ---------------------------------------------------------------------------
-# 방식 1: 클라이언트 측 스필오버
-# ---------------------------------------------------------------------------
-
-
-def run_client_spillover(settings: Settings, worker_id: int) -> SpilloverOutcome:
-    """PTU 를 호출하고, 실패하면 클라이언트가 표준 배포로 직접 넘긴다."""
-    assert settings.standard is not None  # load_settings(require_standard=True) 가 보장
-
-    ptu_client = build_client(settings, settings.ptu)
-    primary = call_deployment(ptu_client, settings, settings.ptu)
-
-    with PRINT_LOCK:
-        print_response_headers(primary, title=f"[client] worker {worker_id} / 1차: PTU")
-        print_spillover_verdict(primary)
-
-    if primary.is_success:
-        with PRINT_LOCK:
-            print(f"\n[client][worker {worker_id}] PTU 가 정상 처리 → 스필오버 불필요")
-        return SpilloverOutcome(worker_id, MODE_CLIENT, primary, None)
-
-    if primary.status_code not in SPILLOVER_STATUS_CODES:
-        with PRINT_LOCK:
-            print(
-                f"\n[client][worker {worker_id}] 상태 코드 {primary.status_code} 는 "
-                f"스필오버 대상이 아닙니다 → 그대로 실패 처리"
-            )
-        return SpilloverOutcome(worker_id, MODE_CLIENT, primary, None)
-
-    with PRINT_LOCK:
-        print(
-            f"\n[client][worker {worker_id}] PTU 가 {primary.status_code} → 대기 없이 "
-            f"{settings.standard.deployment} 로 전환"
-        )
-
-    standard_client = build_client(settings, settings.standard)
-    fallback = call_deployment(standard_client, settings, settings.standard)
-
-    with PRINT_LOCK:
-        print_response_headers(
-            fallback, title=f"[client] worker {worker_id} / 2차: Standard(PayGo)"
-        )
-        print_spillover_verdict(fallback)
-
-    return SpilloverOutcome(worker_id, MODE_CLIENT, primary, fallback)
-
-
-# ---------------------------------------------------------------------------
-# 방식 2: 서비스 측 per-request 스필오버
-# ---------------------------------------------------------------------------
-
-
-def run_header_spillover(settings: Settings, worker_id: int) -> SpilloverOutcome:
-    """x-ms-spillover-deployment 헤더를 붙여 서비스가 넘기게 한다."""
-    assert settings.standard is not None
-
-    client = build_client(settings, settings.ptu)
-    result = call_deployment(
-        client,
-        settings,
-        settings.ptu,
-        extra_headers={SPILLOVER_REQUEST_HEADER: settings.standard.deployment},
+    return client.images.with_raw_response.generate(
+        model=deployment, prompt=args.prompt, n=1, size=args.image_size,
+        extra_headers=extra_headers,
     )
 
-    with PRINT_LOCK:
-        print_response_headers(
-            result,
-            title=f"[header] worker {worker_id} / {SPILLOVER_REQUEST_HEADER}: "
-                  f"{settings.standard.deployment}",
-        )
-        print_spillover_verdict(result)
 
-    return SpilloverOutcome(worker_id, MODE_HEADER, result, None)
-
-
-# ---------------------------------------------------------------------------
-# 실행 / 요약
-# ---------------------------------------------------------------------------
-
-
-def print_summary(outcomes: list[SpilloverOutcome], settings: Settings) -> None:
-    print("\n" + "=" * 78)
-    print("요약")
-    print("=" * 78)
-
-    for outcome in sorted(outcomes, key=lambda item: (item.mode, item.worker_id)):
-        final = outcome.final
-        verdict = "성공" if final.is_success else f"실패({final.status_code})"
-
-        if outcome.mode == MODE_CLIENT:
-            route = (
-                f"PTU({outcome.primary.status_code}) → {final.target.deployment}"
-                if outcome.did_fall_back
-                else f"PTU({outcome.primary.status_code}) 직접 처리"
-            )
-        else:
-            served = final.headers.get("x-ms-deployment-name") or "(헤더 없음)"
-            spilled = final.headers.get("x-ms-spillover-from-deployment")
-            route = f"서비스 라우팅 → {served}" + (f" (spilled from {spilled})" if spilled else "")
-
-        body = describe_payload(final, settings) if final.is_success else ""
-        print(f"  [{outcome.mode}] worker {outcome.worker_id:>3} | {verdict:<10} | {route} | {body}")
-
-    succeeded = sum(1 for outcome in outcomes if outcome.final.is_success)
-    print(f"\n  성공 {succeeded} / 전체 {len(outcomes)}")
+def dump_headers(title, status, headers):
+    """응답 헤더를 그룹으로 나눠 출력한다. 분류에 없는 헤더는 etc 로 함께 찍는다."""
+    print(f"\n=== {title} | HTTP {status} ===")
+    lowered = {key.lower(): value for key, value in headers.items()}
+    grouped = set()
+    for group, names in HEADER_GROUPS.items():
+        grouped.update(names)
+        rows = [(name, lowered[name]) for name in names if name in lowered]
+        if rows:
+            print(f"[{group}]")
+            for name, value in rows:
+                print(f"  {name}: {value}")
+    others = sorted((k, v) for k, v in lowered.items() if k not in grouped)
+    if others:
+        print("[etc]")
+        for name, value in others:
+            print(f"  {name}: {value}")
 
 
-def main() -> int:
+def report_spillover(headers):
+    """서비스 측 스필오버가 일어났는지 헤더 세 개로 판정한다."""
+    lowered = {key.lower(): value for key, value in headers.items()}
+    spilled_from = lowered.get("x-ms-spillover-from-deployment")
+    if spilled_from:
+        log.info("서비스 측 스필오버 발생: %s -> %s (PTU 원본 코드 %s)",
+                 spilled_from, lowered.get("x-ms-deployment-name"),
+                 lowered.get("x-ms-spillover-error"))
+    else:
+        log.info("스필오버 없음. %s 가 직접 처리했다", lowered.get("x-ms-deployment-name"))
+
+
+def run_client_spillover(ptu_endpoint, standard_endpoint, args):
+    """PTU 를 호출하고 실패하면 앱이 직접 표준 배포로 넘긴다."""
+    ptu_client = build_client(ptu_endpoint, args.api_key, args.token_scope)
+
     try:
-        # 두 방식 모두 표준 배포 이름이 있어야 의미가 있으므로 필수로 강제한다.
-        settings = load_settings(require_standard=True)
-        spillover_mode = _resolve_spillover_mode()
-        burst_size = positive_int_env("FOUNDRY_BURST", DEFAULT_BURST_SIZE)
-    except ConfigError as exc:
-        fail(str(exc))
-        return 1
+        raw = call(ptu_client, args.ptu_deployment, args)
+    except openai.APIStatusError as exc:
+        dump_headers("1차 PTU", exc.status_code, exc.response.headers)
 
-    assert settings.standard is not None
+        if exc.status_code not in SPILLOVER_CODES:
+            log.error("HTTP %s 는 스필오버 대상이 아니다", exc.status_code)
+            return False
 
-    print(f"mode          : {settings.mode}")
-    print(f"스필오버 방식 : {spillover_mode}")
-    print(f"PTU 배포      : {settings.ptu.deployment} ({settings.ptu.endpoint})")
-    print(f"표준 배포     : {settings.standard.deployment} ({settings.standard.endpoint})")
-    print(f"동시 요청     : {burst_size}")
+        log.warning("PTU 가 HTTP %s -> 대기 없이 %s 로 전환",
+                    exc.status_code, args.standard_deployment)
+        standard_client = build_client(standard_endpoint, args.api_key, args.token_scope)
+        try:
+            fallback = call(standard_client, args.standard_deployment, args)
+        except openai.APIStatusError as fallback_exc:
+            dump_headers("2차 Standard", fallback_exc.status_code, fallback_exc.response.headers)
+            log.error("표준 배포도 실패: HTTP %s", fallback_exc.status_code)
+            return False
 
-    outcomes: list[SpilloverOutcome] = []
+        dump_headers("2차 Standard", fallback.http_response.status_code, fallback.headers)
+        log.info("표준 배포 %s 가 처리 완료", args.standard_deployment)
+        return True
 
-    if spillover_mode in (MODE_CLIENT, MODE_BOTH):
-        outcomes.extend(
-            run_workers(lambda worker_id: run_client_spillover(settings, worker_id), burst_size)
-        )
+    dump_headers("1차 PTU", raw.http_response.status_code, raw.headers)
+    log.info("PTU 가 정상 처리 -> 스필오버 불필요")
+    return True
 
-    if spillover_mode in (MODE_HEADER, MODE_BOTH):
-        outcomes.extend(
-            run_workers(lambda worker_id: run_header_spillover(settings, worker_id), burst_size)
-        )
 
-    print_summary(outcomes, settings)
+def run_header_spillover(ptu_endpoint, args):
+    """x-ms-spillover-deployment 헤더를 붙여 서비스가 넘기게 한다."""
+    client = build_client(ptu_endpoint, args.api_key, args.token_scope)
+    title = f"{SPILLOVER_HEADER}: {args.standard_deployment}"
 
-    return 0 if all(outcome.final.is_success for outcome in outcomes) else 1
+    try:
+        raw = call(client, args.ptu_deployment, args,
+                   extra_headers={SPILLOVER_HEADER: args.standard_deployment})
+    except openai.APIStatusError as exc:
+        dump_headers(title, exc.status_code, exc.response.headers)
+        log.error("스필오버 후에도 실패: HTTP %s", exc.status_code)
+        return False
+
+    dump_headers(title, raw.http_response.status_code, raw.headers)
+    report_spillover(raw.headers)
+    return True
+
+
+def main():
+    args = parse_args()
+    ptu_endpoint = base_url(args.endpoint)
+    standard_endpoint = base_url(args.standard_endpoint) if args.standard_endpoint else ptu_endpoint
+
+    log.info("PTU %s -> Standard %s | 방식 %s",
+             args.ptu_deployment, args.standard_deployment, args.spillover_mode)
+
+    results = []
+    if args.spillover_mode in ("client", "both"):
+        results.append(run_client_spillover(ptu_endpoint, standard_endpoint, args))
+    if args.spillover_mode in ("header", "both"):
+        results.append(run_header_spillover(ptu_endpoint, args))
+
+    if not all(results):
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
