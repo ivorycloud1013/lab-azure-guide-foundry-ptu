@@ -328,19 +328,7 @@ OpenAI(...).with_options(max_retries=5).chat.completions.create(...)
 
 ### 3.3 `foundry-model-ptu-deploy-429-spillover.py`
 
-PTU 배포가 429 를 돌려줄 때 Standard(PayGo) 배포로 넘기는 방법은 세 가지다. 무엇이 전환을 수행하는지, 어디에 설정하는지가 다르다.
-
-| 방식 | 설정 위치 | 적용 범위 | 이 스크립트 |
-|---|---|---|---|
-| 배포 속성 `spilloverDeploymentName` | 포털 [Traffic spillover] 또는 REST | 해당 PTU 배포로 오는 **모든 요청** | `--spillover-mode` 미지정 |
-| 요청 헤더 `x-ms-spillover-deployment` | 추론 요청 헤더 | 헤더를 붙인 **요청만** | `--spillover-mode header` |
-| 클라이언트 전환 | 애플리케이션 코드 | 앱이 정한 조건 | `--spillover-mode client` |
-
-앞의 두 가지는 Foundry 서비스가 전환하고, 세 번째는 클라이언트가 전환한다. 서비스가 전환하는 두 방식은 Standard 배포가 **PTU 와 같은 리소스**에 있고 **모델과 버전이 같아야** 한다. 클라이언트 전환에는 그 제약이 없다.
-
-> 배포 속성과 요청 헤더가 모두 설정돼 있으면 **배포 속성이 우선**하고 헤더는 무시된다. 요청 단위로만 제어하려면 배포 속성을 비워 둔다.
-
-Python 코드의 입력 매개변수에 대한 설명은 아래와 같다.
+PTU 모델 배포가 429 HTTP status code 으로 반환할 경우 다른 모델 배포로 spillover 하는 방법들에 대해 다룬다. Python 코드의 입력 매개변수에 대한 설명은 아래와 같다.
 
 | Arguments | Required | Default | Description |
 |---|---|---|---|
@@ -350,7 +338,6 @@ Python 코드의 입력 매개변수에 대한 설명은 아래와 같다.
 | `--api` | | `images.generate` | `images.generate` \| `chat.completions` |
 | `--auth` | | `entra-id` | `entra-id` \| `entra-id=<스코프>` \| `api-key=<키>` |
 | `--prompt` | | | 프롬프트 |
-| `--spillover-endpoint` | | `--endpoint` 와 동일 | spillover 대상 배포가 다른 리소스에 있을 때만 지정. 역시 전체 URL |
 | `--spillover-mode` | |  | 미지정시, PTU 모델 배포 속성 따름<br/>`header` = `x-ms-spillover-deployment` 헤더로 서비스에 전환을 위임<br/>`client` = 클라이언트가 429 를 받고 직접 Standard 배포로 재요청 |
 
 응답 헤더는 [3.1.1](#311-응답-헤더-정보) 표에서 `PTU` 에 해당하는 값만 다룬다.
@@ -406,7 +393,7 @@ Standard 배포마저 실패하면 Standard 배포의 상태 코드와 본문이
 클라이언트가 PTU 배포의 응답을 보고 직접 전환한다. 상태 코드가 `400` / `429` / `500` / `503` 이면 `retry-after` 를 기다리지 않고 곧바로 Standard 배포로 같은 요청을 다시 보낸다.
 
 - 전환 조건과 대상을 앱이 정한다. 어떤 상태 코드에서 넘길지, 몇 번 시도할지를 코드로 바꿀 수 있다
-- Standard 배포가 **다른 리소스·다른 리전**에 있어도 된다. `--spillover-endpoint` 로 지정한다
+- 대상을 앱이 고르므로 **다른 리소스·다른 리전**의 배포로도 넘길 수 있다. 이 스크립트는 단순화를 위해 `--endpoint` 하나만 쓴다
 - 요청이 두 번 나가므로 전환이 일어난 요청의 지연은 서비스 측보다 크다
 - 서비스가 관여하지 않으므로 응답에 `x-ms-spillover-*` 헤더가 붙지 않는다. 어느 배포가 처리했는지는 `x-ms-deployment-name` 으로 확인한다
 
