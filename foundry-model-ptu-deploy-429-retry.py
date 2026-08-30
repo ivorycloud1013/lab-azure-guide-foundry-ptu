@@ -42,7 +42,8 @@ API_CHAT_COMPLETIONS = "chat.completions"
 IMAGE_APIS = (API_IMAGES_GENERATE, API_IMAGES_EDIT)
 
 # 재시도 대상 상태 코드. 그 외에는 즉시 중단한다.
-RETRYABLE = frozenset({408, 429, 500, 502, 503, 504})
+# openai SDK 의 기본 재시도 대상(408/409/429/5xx)과 맞춘다.
+RETRYABLE = frozenset({408, 409, 429, 500, 502, 503, 504})
 
 # retry-after 헤더가 없을 때만 쓰는 지수 백오프.
 BASE_BACKOFF_SECONDS = 1.0
@@ -118,6 +119,10 @@ def parse_args():
 
     args = parser.parse_args()
     args.api_key, args.token_scope = resolve_auth(args.auth, parser)
+    if args.max_attempts < 1:
+        parser.error("--max-attempts 는 1 이상이어야 한다")
+    if args.burst < 1:
+        parser.error("--burst 는 1 이상이어야 한다")
     # images.edit 는 편집 대상 이미지가 있어야 한다.
     if args.api == API_IMAGES_EDIT:
         if not args.image:
@@ -185,14 +190,20 @@ def dump_headers(title, status, headers):
 
 
 def retry_after_seconds(headers):
-    """retry-after-ms(밀리초) 를 우선 쓰고, 없으면 retry-after(초) 를 쓴다."""
+    """retry-after-ms(밀리초) 를 우선 쓰고, 없으면 retry-after(초) 를 쓴다.
+
+    Retry-After 는 HTTP-date 형식도 허용되고 중간 프록시가 그렇게 보낼 수 있다.
+    숫자로 읽히지 않으면 None 을 돌려 백오프로 넘긴다.
+    """
     lowered = {key.lower(): value for key, value in headers.items()}
-    raw_ms = lowered.get("retry-after-ms")
-    if raw_ms:
-        return int(raw_ms) / 1000.0
-    raw_seconds = lowered.get("retry-after")
-    if raw_seconds:
-        return float(raw_seconds)
+    for name, divisor in (("retry-after-ms", 1000.0), ("retry-after", 1.0)):
+        raw = lowered.get(name)
+        if not raw:
+            continue
+        try:
+            return float(raw) / divisor
+        except (TypeError, ValueError):
+            log.warning("%s 헤더를 숫자로 읽지 못했다: %r", name, raw)
     return None
 
 
@@ -205,10 +216,8 @@ def wait_seconds(headers, attempt_index):
     return header_wait + header_wait * JITTER_RATIO * random.random()
 
 
-def run_worker(worker_id, endpoint, args):
+def run_worker(worker_id, client, args):
     """한 요청을 최대 --max-attempts 번까지 재시도한다."""
-    client = build_client(endpoint, args.api_key, args.token_scope)
-
     for attempt_index in range(args.max_attempts):
         attempt = attempt_index + 1
         try:
@@ -224,9 +233,22 @@ def run_worker(worker_id, endpoint, args):
                 return False
 
             delay = wait_seconds(exc.response.headers, attempt_index)
-            source = "retry-after" if retry_after_seconds(exc.response.headers) else "백오프"
+            source = "retry-after" if retry_after_seconds(exc.response.headers) is not None else "백오프"
             log.warning("worker %s: HTTP %s -> %.3f초 대기 (%s)",
                         worker_id, exc.status_code, delay, source)
+            time.sleep(delay)
+            continue
+        except openai.APIConnectionError as exc:
+            # 응답 자체가 없다(타임아웃 포함). retry-after 도 없으니 백오프로만 재시도한다.
+            # max_retries=0 으로 SDK 기본 재시도를 껐으므로 여기서 직접 처리해야 한다.
+            if attempt == args.max_attempts:
+                log.error("worker %s: %s 회 시도 후 포기 (%s)",
+                          worker_id, attempt, type(exc).__name__)
+                return False
+
+            delay = wait_seconds({}, attempt_index)
+            log.warning("worker %s: %s -> %.3f초 대기 (백오프)",
+                        worker_id, type(exc).__name__, delay)
             time.sleep(delay)
             continue
 
@@ -243,11 +265,15 @@ def main():
     log.info("PTU 배포 %s | 동시 요청 %s | 최대 시도 %s",
              args.deployment, args.burst, args.max_attempts)
 
+    # 클라이언트는 하나만 만들어 모든 워커가 공유한다. openai 클라이언트는 스레드 안전하고,
+    # 워커마다 만들면 Entra ID 자격 증명 객체가 워커 수만큼 생겨 토큰을 따로 받게 된다.
+    client = build_client(endpoint, args.api_key, args.token_scope)
+
     if args.burst == 1:
-        results = [run_worker(1, endpoint, args)]
+        results = [run_worker(1, client, args)]
     else:
         with ThreadPoolExecutor(max_workers=args.burst) as pool:
-            results = list(pool.map(lambda i: run_worker(i, endpoint, args),
+            results = list(pool.map(lambda i: run_worker(i, client, args),
                                     range(1, args.burst + 1)))
 
     log.info("성공 %s / 전체 %s", sum(results), len(results))

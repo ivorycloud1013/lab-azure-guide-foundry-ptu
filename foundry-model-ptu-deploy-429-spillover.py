@@ -110,6 +110,9 @@ def parse_args():
     args.api_key, args.token_scope = resolve_auth(args.auth, parser)
     if args.spillover_mode and not args.spillover_deployment:
         parser.error(f"--spillover-mode {args.spillover_mode} 에는 --spillover-deployment 가 필요하다")
+    if args.spillover_deployment and not args.spillover_mode:
+        log.warning("--spillover-mode 가 없어 --spillover-deployment %s 는 쓰이지 않는다. "
+                    "배포 속성 spilloverDeploymentName 에 맡긴다", args.spillover_deployment)
     if not args.prompt:
         args.prompt = (DEFAULT_IMAGE_PROMPT if args.api == API_IMAGES_GENERATE
                        else DEFAULT_CHAT_PROMPT)
@@ -170,38 +173,57 @@ def dump_headers(title, status, headers):
 def report_spillover(headers):
     """서비스 측 스필오버가 일어났는지 헤더 세 개로 판정한다."""
     lowered = {key.lower(): value for key, value in headers.items()}
+    served = lowered.get("x-ms-deployment-name")
     spilled_from = lowered.get("x-ms-spillover-from-deployment")
+
     if spilled_from:
         log.info("서비스 측 스필오버 발생: %s -> %s (PTU 원본 코드 %s)",
-                 spilled_from, lowered.get("x-ms-deployment-name"),
-                 lowered.get("x-ms-spillover-error"))
+                 spilled_from, served, lowered.get("x-ms-spillover-error"))
+    elif served:
+        log.info("스필오버 없음. %s 가 직접 처리했다", served)
     else:
-        log.info("스필오버 없음. %s 가 직접 처리했다", lowered.get("x-ms-deployment-name"))
+        log.info("스필오버 헤더가 없다. 배포에 spilloverDeploymentName 이 없거나 PTU 에 여유가 있다")
+
+
+def run_standard_fallback(client, args):
+    """표준 배포로 같은 요청을 다시 보낸다. 클라이언트는 그대로 재사용한다."""
+    try:
+        fallback = call(client, args.spillover_deployment, args)
+    except openai.APIStatusError as exc:
+        dump_headers("2차 Standard", exc.status_code, exc.response.headers)
+        log.error("표준 배포도 실패: HTTP %s", exc.status_code)
+        return False
+    except openai.APIConnectionError as exc:
+        log.error("표준 배포 연결 실패: %s", type(exc).__name__)
+        return False
+
+    dump_headers("2차 Standard", fallback.http_response.status_code, fallback.headers)
+    log.info("표준 배포 %s 가 처리 완료", args.spillover_deployment)
+    return True
 
 
 def run_client_spillover(endpoint, args):
-    """PTU 를 호출하고 실패하면 앱이 직접 표준 배포로 넘긴다."""
-    ptu_client = build_client(endpoint, args.api_key, args.token_scope)
+    """PTU 를 호출하고 실패하면 앱이 직접 표준 배포로 넘긴다.
+
+    엔드포인트도 인증도 같으므로 클라이언트를 새로 만들지 않고 재사용한다.
+    새로 만들면 자격 증명도 새로 만들어져 전환 경로에 토큰 취득이 끼어든다.
+    """
+    client = build_client(endpoint, args.api_key, args.token_scope)
 
     try:
-        raw = call(ptu_client, args.deployment, args)
+        raw = call(client, args.deployment, args)
     except openai.APIStatusError as exc:
         dump_headers("1차 PTU", exc.status_code, exc.response.headers)
 
         # 상태 코드를 가리지 않는다. 200 이 아니면 곧바로 넘긴다.
         log.warning("PTU 가 HTTP %s -> 대기 없이 %s 로 전환",
                     exc.status_code, args.spillover_deployment)
-        spillover_client = build_client(endpoint, args.api_key, args.token_scope)
-        try:
-            fallback = call(spillover_client, args.spillover_deployment, args)
-        except openai.APIStatusError as fallback_exc:
-            dump_headers("2차 Standard", fallback_exc.status_code, fallback_exc.response.headers)
-            log.error("표준 배포도 실패: HTTP %s", fallback_exc.status_code)
-            return False
-
-        dump_headers("2차 Standard", fallback.http_response.status_code, fallback.headers)
-        log.info("표준 배포 %s 가 처리 완료", args.spillover_deployment)
-        return True
+        return run_standard_fallback(client, args)
+    except openai.APIConnectionError as exc:
+        # 응답이 아예 오지 않은 경우(연결 실패·타임아웃)도 전환 대상이다.
+        log.warning("PTU 연결 실패 (%s) -> 대기 없이 %s 로 전환",
+                    type(exc).__name__, args.spillover_deployment)
+        return run_standard_fallback(client, args)
 
     dump_headers("1차 PTU", raw.http_response.status_code, raw.headers)
     log.info("PTU 가 정상 처리 -> 스필오버 불필요")
@@ -223,6 +245,9 @@ def run_deployment_spillover(ptu_endpoint, args):
         if exc.status_code == 429:
             log.error("배포에 spilloverDeploymentName 이 없거나 Standard 배포도 처리하지 못했다")
         return False
+    except openai.APIConnectionError as exc:
+        log.error("PTU 연결 실패: %s", type(exc).__name__)
+        return False
 
     dump_headers("PTU 응답", raw.http_response.status_code, raw.headers)
     report_spillover(raw.headers)
@@ -240,6 +265,9 @@ def run_header_spillover(ptu_endpoint, args):
     except openai.APIStatusError as exc:
         dump_headers(title, exc.status_code, exc.response.headers)
         log.error("스필오버 후에도 실패: HTTP %s", exc.status_code)
+        return False
+    except openai.APIConnectionError as exc:
+        log.error("연결 실패: %s", type(exc).__name__)
         return False
 
     dump_headers(title, raw.http_response.status_code, raw.headers)

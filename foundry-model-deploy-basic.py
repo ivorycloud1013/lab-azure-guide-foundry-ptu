@@ -206,6 +206,10 @@ def report_result(payload, args):
         return
 
     image_b64 = payload.data[0].b64_json
+    if not image_b64:
+        log.error("응답에 base64 이미지가 없다. 모델이 URL 로 돌려줬을 수 있다: %s", payload.data[0])
+        raise SystemExit(1)
+
     log.info("이미지 %s장 수신 (base64 %s자)", len(payload.data), len(image_b64))
     if args.output_image:
         with open(args.output_image, "wb") as target:
