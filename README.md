@@ -16,9 +16,8 @@ Microsoft Foundry 에서 [PTU(Provisioned Throughput Unit)](https://learn.micros
 
 ## 0. 요약
 
-- PTU 는 처리 용량(throughput)을 시간 단위로 구매하는 배포 방법으로, 배포되어 Endpoint 가 제공되면 hourly billing 로 과금이 발생한다. 배포를 지워야 과금이 멈춘다.
-- PTU 의 처리 용량을 초과하는 요청은 Too Many Requests (429 HTTP Status Code) 로 즉시 응답하여, 사용자에게 제어권을 넘긴다.
-- 429 를 받은 요청은 재시도하거나, spillover 로 Standard 배포에 넘겨 처리한다.
+- PTU 는 처리 용량(throughput)을 시간 단위로 구매하는 배포 방법으로, PTU 모델 배포가 완료되면 과금이 발생한다. **<span style="color:red">꼭, 미사용시에는 PTU 모델 배포를 삭제해야 한다.</span>** ([AI Portal 에서 PTU 배포하기](#2-ai-portal-에서-ptu-배포하기) 참고)
+- PTU 모델 배포의 처리 용량을 초과하는 요청은 Too Many Requests (429 HTTP Status Code) 로 즉시 응답한다. 이에 대한 retry 나 spillover 전략을 갖춰야 한다 ([Sample Code](#3-Sample-Code) 참고).
 
 ---
 
@@ -413,24 +412,20 @@ python foundry-model-ptu-deploy-429-spillover.py \
 
 ## 4. 마무리
 
-### 4.1 미처리 응답 대응 전략
-
-PTU 배포가 200 을 돌려주지 못하는 경우는 429 만이 아니다. 사용률 소진(`429`), PTU 가 지원하지 않는 롱컨텍스트 요청(`400`), 서버 오류(`500` / `503`) 가 모두 여기 해당한다.
-
-결국 **비용과 지연 중 무엇을 지킬 것인가**의 문제다. 추가 비용을 내지 않으려면 PTU 가 빌 때까지 기다려야 하므로 지연이 늘고, 지연을 막으려면 Standard 배포로 넘겨 토큰 요금을 내야 한다. 둘을 동시에 만족시킬 수는 없다.
+PTU 모델 배포는 정해진 처리 용량내에서 추론을 수행하므로, Not OK 되는 응답에 대해서 결정 로직이 필요하다. 문제는 "비용과 지연 중 무엇을 지킬 것인지" 이고, 결정에 따라 사용할 Python 코드는 아래와 같다.
 
 ```mermaid
 flowchart LR
-    Req["모델 배포 요청"] --> Code{"응답"}
+    Code{"응답"}
     Code -->|"200"| Done["Done"]
-    Code -->|"non-200"| Trade{"무엇을 지킬 것인가"}
+    Code -->|"non-200"| Trade{"비용 vs. 지연"}
 
-    Trade -->|"추가 비용 없어야 함<br/>지연 감수"| Retry["PTU 로 retry<br/>retry-after-ms 만큼 대기"]
-    Trade -->|"지연 없어야 함<br/>토큰 비용 감수"| Spill{"spillover 방식"}
+    Trade -->|"추가 비용 없어야 함<br/>지연 감수"| Retry["[Retry] foundry-model-ptu-deploy-429-retry.py"]
+    Trade -->|"추가 지연 없어야 함<br/>비용 감수"| Spill{"spillover 방식"}
 
-    Spill -->|"워크로드별 최적화"| Header["요청 헤더<br/>x-ms-spillover-deployment"]
-    Spill -->|"클라이언트 직접 제어"| Client["앱이 Standard 배포 직접 호출"]
-    Spill -->|"static 한 배포 속성"| Prop["spilloverDeploymentName"]
+    Spill -->|"워크로드별 최적화"| Header["[Spillover] foundry-model-ptu-deploy-429-spillover.py --spillover-mode header"]
+    Spill -->|"클라이언트 직접 제어"| Client["[Spillover] foundry-model-ptu-deploy-429-spillover.py --spillover-mode client"]
+    Spill -->|"static 한 배포 속성"| Prop["[Spillover] foundry-model-ptu-deploy-429-spillover.py (--spillover-mode 미지정)"]
 
     Retry --> Done
     Header --> Done
@@ -443,31 +438,3 @@ flowchart LR
     style Client fill:#fae8ff,stroke:#a21caf
     style Prop fill:#e0f2fe,stroke:#0284c7
 ```
-
-각 선택지는 아래 실행 인자로 재현한다.
-
-| 지켜야 하는 것 | 선택 | 실행 |
-|---|---|---|
-| 추가 비용이 없어야 한다 | PTU 로 retry | `foundry-model-ptu-deploy-429-retry.py` |
-| 지연이 없어야 한다 · 워크로드별로 켜고 끈다 | 요청 헤더 spillover | `foundry-model-ptu-deploy-429-spillover.py --spillover-mode header` |
-| 지연이 없어야 한다 · 전환 조건을 앱이 통제한다 | 클라이언트 측 spillover | `foundry-model-ptu-deploy-429-spillover.py --spillover-mode client` |
-| 지연이 없어야 한다 · 배포 단위로 늘 켜 둔다 | 배포 속성 spillover | `foundry-model-ptu-deploy-429-spillover.py` (`--spillover-mode` 미지정) |
-
-롱컨텍스트 요청이 `400` 으로 떨어지는 경우(예: gpt-4.1 계열 PTU 는 128K 미만만 지원)는 retry 로 풀리지 않는다. 몇 번을 다시 보내도 같은 `400` 이므로 spillover 만이 답이다.
-
-과금은 요청을 처리한 배포를 따른다. PTU 가 처리한 요청은 시간당 PTU 비용만 발생하고 추가 과금이 없다. spillover 되어 Standard 배포가 처리한 요청은 해당 모델·배포 유형의 입력 / 캐시 / 출력 토큰 요금이 별도로 발생한다.
-
-### 4.2 실습 후 반드시 배포를 삭제한다
-
-**PTU 는 요청을 한 건도 보내지 않아도 배포가 존재하는 동안 계속 과금된다.** 100 PTU 배포를 켜 두고 하루를 넘기면 캡처 시점 정가 기준으로 $2,400 이 쌓인다. 실습이 끝나면 즉시 정리한다.
-
-| 순서 | 작업 | 놓치면 |
-|---|---|---|
-| 1 | 포털에서 **모델 배포를 삭제** ([2.7](#27-배포-삭제)) | 시간당 과금이 계속된다 |
-| 2 | 리소스도 지운다면 **배포를 모두 지운 뒤** 리소스 삭제 | 배포가 남은 채 리소스만 지워진다 |
-| 3 | 삭제한 Foundry 리소스를 **purge(영구 삭제)** | 소프트 삭제 상태로 남아 과금이 이어진다 |
-| 4 | Azure Portal → Reservations 에서 **예약을 별도로 취소/교환** | 배포를 지워도 예약 약정은 그대로 청구된다 |
-
-특히 3번과 4번이 놓치기 쉽다. 리소스를 지웠다고 과금이 멈추지 않으며, 예약은 배포와 독립적인 재무 계약이라 배포 삭제로 해지되지 않는다. 예약 취소·교환에는 수수료가 붙을 수 있다.
-
-`Cognitive Services` 리소스의 삭제 상태는 [삭제된 Azure AI 리소스 복구 또는 제거](https://learn.microsoft.com/en-us/azure/ai-services/recover-purge-resources) 절차로 확인한다.
