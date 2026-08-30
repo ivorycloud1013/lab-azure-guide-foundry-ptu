@@ -11,7 +11,7 @@ header  x-ms-spillover-deployment 헤더로 Foundry 에 위임한다. 왕복이 
 header 방식은 무시된다.
 
     python foundry-model-ptu-deploy-429-spillover.py \\
-        --endpoint https://<resource>.openai.azure.com \\
+        --endpoint https://<resource>.openai.azure.com/openai/v1/ \\
         --ptu-deployment gpt-image-2 \\
         --standard-deployment gpt-image-2-paygo \\
         --spillover-mode header
@@ -63,7 +63,7 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="PTU 429 를 Standard 배포로 넘기는 두 방식을 비교한다.")
     parser.add_argument("--endpoint", required=True,
-                        help="Foundry 리소스 엔드포인트. /openai/v1/ 는 자동으로 붙인다")
+                        help="모델 배포 엔드포인트. /openai/v1/ 까지 포함한 전체 URL")
     parser.add_argument("--ptu-deployment", required=True, help="PTU 배포 이름")
     parser.add_argument("--standard-deployment", required=True,
                         help="스필오버 대상 Standard(PayGo) 배포 이름")
@@ -93,10 +93,11 @@ def parse_args():
     return args
 
 
-def base_url(raw):
-    """엔드포인트는 /openai/v1/ 로 끝나야 한다. 아니면 404 가 난다."""
-    url = raw.rstrip("/")
-    return url + "/" if url.endswith("/openai/v1") else url + "/openai/v1/"
+def check_endpoint(url):
+    """v1 데이터플레인 경로가 아니면 404 가 난다. 고쳐주지는 않고 경고만 한다."""
+    if not url.rstrip("/").endswith("/openai/v1"):
+        log.warning("엔드포인트가 /openai/v1/ 로 끝나지 않는다. 404 가 날 수 있다: %s", url)
+    return url
 
 
 def build_client(endpoint, api_key, token_scope):
@@ -207,8 +208,8 @@ def run_header_spillover(ptu_endpoint, args):
 
 def main():
     args = parse_args()
-    ptu_endpoint = base_url(args.endpoint)
-    standard_endpoint = base_url(args.standard_endpoint) if args.standard_endpoint else ptu_endpoint
+    ptu_endpoint = check_endpoint(args.endpoint)
+    standard_endpoint = check_endpoint(args.standard_endpoint) if args.standard_endpoint else ptu_endpoint
 
     log.info("PTU %s -> Standard %s | 방식 %s",
              args.ptu_deployment, args.standard_deployment, args.spillover_mode)

@@ -116,7 +116,7 @@ PTU 는 배포된 PTU 수에 따라 hourly billing `$/PTU/hr` 으로 청구된�
 ![PTU 및 요금](images/foundry-discover-models-gpt-image-2-deploy-settings-spill-over.png)
 
 요청한 PTU 의 location 정보를 포함한 배포 유형에 맞춰 입력값을 선택한다. 일반적으로 Model version 은 latest 로 하여 배포한다. 배포에 할당한 PTUs 는 직접 입력이 가능하며, 상단에 있는 [Calculate provisioned throughput unit capacity] 를 이용하여 모델별 용량을 계산하여 PTUs 를 할당할 수도 있다.
-모델 배포 앤드포인트는 정해진 capacity 를 초과한 요청에 대해서는 다른 앤드포인트로 [spillover](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/spillover-traffic-management) 할 수 있으며, 일반적으로는 Paygo 모델 배포를 지정한다.
+모델 배포 엔드포인트는 정해진 capacity 를 초과한 요청에 대해서는 다른 엔드포인트로 [spillover](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/spillover-traffic-management) 할 수 있으며, 일반적으로는 Paygo 모델 배포를 지정한다.
 
 | 입력값 | 설명 | 예시 |
 |---|---|---|
@@ -158,7 +158,7 @@ Language / Authentication method 를 고른 샘플이 나온다. 코드에 `endp
 [delete] 을 눌러 모델 배포를 삭제한다. **<span style="color:red">과금은 모델 배포를 삭제해야 멈춘다. Foundry 리소스 삭제는 purge (영구삭제) 될 때까지 배포된 상태로 남아 있어 과금이 지속된다.</span>**
 
 ### 2.8 모니터링
-PTU 배포는 정해진 throughput 을 할당하여 운영하며 배포 앤드포인트에서 얼마나 throughput 을 소비하는지 `Azure Monitor` 를 통해 추적할 수 있다.
+PTU 배포는 정해진 throughput 을 할당하여 운영하며 배포 엔드포인트에서 얼마나 throughput 을 소비하는지 `Azure Monitor` 를 통해 추적할 수 있다.
 - [Azure Portal] → [Foundry 리소스] → [Monitoring - Metrics] → [[Provisioned-managed utilization V2](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/provisioned-get-started#measure-deployment-utilization)]
 
 PTU 배포가 다수가 존재하면 `Apply splitting` 으로 PTU 배포별로 나눠 볼 수 있다. Utilization 이 100% 에 saturation 된다면 PTU 를 증설하거나 spillover 해야 한다.
@@ -176,7 +176,7 @@ Spillover 된 요청은 PTU 배포쪽에 429 로 집계되지 않고 해당 요�
 
 ## 3. Sample Code
 
-Repository 는 foundry 의 모델 배포 앤드포인트에 대한 Python 클라이언트 코드를 가진다.
+Repository 는 foundry 의 모델 배포 엔드포인트에 대한 Python 클라이언트 코드를 가진다.
 
 | 파일 | 역할 |
 |---|---|
@@ -194,19 +194,17 @@ Python 코드들에 대한 실행 환경은 다음과 같다.
 
 Entra ID 인증을 위해서는 실행 환경에서 `az login` 이 완료된 상태여야 한다.
 
-> `--api-key` 로 넘긴 키는 프로세스 목록(`ps`)에 그대로 노출된다. 인자를 생략해 Entra ID 로 인증하는 쪽이 기본이자 권장이다.
 
+### 3.1 `foundry-model-deploy-basic.py`
 
-### 3.1 기본 호출 — `foundry-model-deploy-basic.py`
+Microsoft Foundry 에 배포된 모델 엔드포인트에 대한 추론 요청을 다룬다.
 
-재시도도 spillover 도 하지 않고 한 번만 호출한다. 인증과 엔드포인트 설정이 맞는지, 어느 배포가 요청을 처리했는지 확인하는 기준선이다.
+**Arguments**
 
-**실행 인자**
-
-| 인자 | 필수 | 기본값 | 설명 |
+| Arguments | Required | Default | Description |
 |---|---|---|---|
-| `--endpoint` | ✅ | — | Foundry 리소스 엔드포인트. `/openai/v1/` 는 자동으로 붙인다 |
-| `--deployment` | ✅ | — | 모델 배포 이름 |
+| `--endpoint` | Yes | — | 모델 배포 엔드포인트. `/openai/v1/` 까지 포함한 전체 URL |
+| `--deployment` | Yes | — | 모델 배포 이름 |
 | `--api` | | `images.generate` | `images.generate` \| `images.edit` \| `chat.completions` |
 | `--api-key` | | (없음) | 지정하면 키 인증, 생략하면 Entra ID |
 | `--token-scope` | | `https://ai.azure.com/.default` | classic 데이터플레인은 `https://cognitiveservices.azure.com/.default` |
@@ -219,20 +217,20 @@ Entra ID 인증을 위해서는 실행 환경에서 `az login` 이 완료된 상
 ```bash
 # 이미지 생성
 python foundry-model-deploy-basic.py \
-  --endpoint https://minwook-foundry-northce-resource.openai.azure.com \
+  --endpoint https://minwook-foundry-northce-resource.openai.azure.com/openai/v1/ \
   --deployment gpt-image-2 \
   --api images.generate --output out.png
 
 # 생성한 이미지를 편집
 python foundry-model-deploy-basic.py \
-  --endpoint https://minwook-foundry-northce-resource.openai.azure.com \
+  --endpoint https://minwook-foundry-northce-resource.openai.azure.com/openai/v1/ \
   --deployment gpt-image-2 \
   --api images.edit --image out.png \
   --prompt "add a red scarf" --output edited.png
 
 # 채팅 완성
 python foundry-model-deploy-basic.py \
-  --endpoint https://minwook-foundry-northce-resource.openai.azure.com \
+  --endpoint https://minwook-foundry-northce-resource.openai.azure.com/openai/v1/ \
   --deployment gpt-5-mini \
   --api chat.completions
 ```
@@ -307,7 +305,7 @@ PTU 는 사용률이 100% 에 닿으면 큐잉하지 않고 즉시 429 를 돌�
 
 | 인자 | 필수 | 기본값 | 설명 |
 |---|---|---|---|
-| `--endpoint` | ✅ | — | Foundry 리소스 엔드포인트. `/openai/v1/` 는 자동으로 붙인다 |
+| `--endpoint` | ✅ | — | 모델 배포 엔드포인트. `/openai/v1/` 까지 포함한 전체 URL |
 | `--ptu-deployment` | ✅ | — | PTU 배포 이름 |
 | `--api-key` | | (없음) | 지정하면 키 인증, 생략하면 Entra ID |
 | `--token-scope` | | `https://ai.azure.com/.default` | classic 데이터플레인은 `https://cognitiveservices.azure.com/.default` |
@@ -338,7 +336,7 @@ flowchart LR
 
 ```bash
 python foundry-model-ptu-deploy-429-retry.py \
-  --endpoint https://minwook-foundry-northce-resource.openai.azure.com \
+  --endpoint https://minwook-foundry-northce-resource.openai.azure.com/openai/v1/ \
   --ptu-deployment gpt-image-2 \
   --burst 20 --max-attempts 6
 ```
@@ -356,7 +354,7 @@ PTU 가 429 를 돌려줄 때 Standard(PayGo) 배포로 넘기는 두 가지 방
 | 인자 | 필수 | 기본값 | 설명 |
 |---|---|---|---|
 | `--standard-deployment` | ✅ | — | 스필오버 대상 Standard(PayGo) 배포 이름 |
-| `--endpoint` | ✅ | — | Foundry 리소스 엔드포인트. `/openai/v1/` 는 자동으로 붙인다 |
+| `--endpoint` | ✅ | — | 모델 배포 엔드포인트. `/openai/v1/` 까지 포함한 전체 URL |
 | `--ptu-deployment` | ✅ | — | PTU 배포 이름 |
 | `--api-key` | | (없음) | 지정하면 키 인증, 생략하면 Entra ID |
 | `--token-scope` | | `https://ai.azure.com/.default` | classic 데이터플레인은 `https://cognitiveservices.azure.com/.default` |
@@ -364,7 +362,7 @@ PTU 가 429 를 돌려줄 때 Standard(PayGo) 배포로 넘기는 두 가지 방
 | `--prompt` | | `--api` 별 기본값 | 프롬프트 |
 | `--image-size` | | `1024x1024` | `images.*` 전용 |
 | `--max-tokens` | | `256` | `chat.completions` 전용. **PTU 사용률 추정에 직접 반영**되므로 실제 생성량에 맞춘다 |
-| `--standard-endpoint` | | `--endpoint` 와 동일 | 표준 배포가 **다른 리소스**에 있을 때만 지정 |
+| `--standard-endpoint` | | `--endpoint` 와 동일 | 표준 배포가 **다른 리소스**에 있을 때만 지정. 역시 전체 URL |
 | `--spillover-mode` | | `client` | `client` \| `header` \| `both` |
 
 **클라이언트 측 스필오버** — 앱이 직접 넘긴다. 표준 배포가 다른 리소스·리전에 있어도 되고, 전환 조건을 앱이 통제한다.
@@ -386,7 +384,7 @@ sequenceDiagram
 
 ```bash
 python foundry-model-ptu-deploy-429-spillover.py \
-  --endpoint https://minwook-foundry-northce-resource.openai.azure.com \
+  --endpoint https://minwook-foundry-northce-resource.openai.azure.com/openai/v1/ \
   --ptu-deployment gpt-image-2 \
   --standard-deployment gpt-image-2-paygo
 ```
@@ -414,7 +412,7 @@ sequenceDiagram
 
 ```bash
 python foundry-model-ptu-deploy-429-spillover.py \
-  --endpoint https://minwook-foundry-northce-resource.openai.azure.com \
+  --endpoint https://minwook-foundry-northce-resource.openai.azure.com/openai/v1/ \
   --ptu-deployment gpt-image-2 \
   --standard-deployment gpt-image-2-paygo \
   --spillover-mode header
@@ -424,7 +422,7 @@ python foundry-model-ptu-deploy-429-spillover.py \
 
 ```bash
 python foundry-model-ptu-deploy-429-spillover.py \
-  --endpoint https://minwook-foundry-northce-resource.openai.azure.com \
+  --endpoint https://minwook-foundry-northce-resource.openai.azure.com/openai/v1/ \
   --ptu-deployment gpt-image-2 \
   --standard-deployment gpt-image-2-paygo \
   --spillover-mode both

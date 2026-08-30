@@ -6,7 +6,7 @@ retry-after-ms / retry-after 로 다시 올 시점을 알려준다. 그 값을 �
 헤더가 없을 때만 지수 백오프로 폴백한다.
 
     python foundry-model-ptu-deploy-429-retry.py \\
-        --endpoint https://<resource>.openai.azure.com \\
+        --endpoint https://<resource>.openai.azure.com/openai/v1/ \\
         --ptu-deployment gpt-image-2 \\
         --burst 20 --max-attempts 6
 """
@@ -64,7 +64,7 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="PTU 의 429 를 retry-after 헤더에 맞춰 재시도한다.")
     parser.add_argument("--endpoint", required=True,
-                        help="Foundry 리소스 엔드포인트. /openai/v1/ 는 자동으로 붙인다")
+                        help="모델 배포 엔드포인트. /openai/v1/ 까지 포함한 전체 URL")
     parser.add_argument("--ptu-deployment", required=True, help="PTU 배포 이름")
     parser.add_argument("--api-key",
                         help="지정하면 키 인증. 생략하면 Entra ID (권장). "
@@ -92,10 +92,11 @@ def parse_args():
     return args
 
 
-def base_url(raw):
-    """엔드포인트는 /openai/v1/ 로 끝나야 한다. 아니면 404 가 난다."""
-    url = raw.rstrip("/")
-    return url + "/" if url.endswith("/openai/v1") else url + "/openai/v1/"
+def check_endpoint(url):
+    """v1 데이터플레인 경로가 아니면 404 가 난다. 고쳐주지는 않고 경고만 한다."""
+    if not url.rstrip("/").endswith("/openai/v1"):
+        log.warning("엔드포인트가 /openai/v1/ 로 끝나지 않는다. 404 가 날 수 있다: %s", url)
+    return url
 
 
 def build_client(endpoint, api_key, token_scope):
@@ -195,7 +196,7 @@ def run_worker(worker_id, endpoint, args):
 
 def main():
     args = parse_args()
-    endpoint = base_url(args.endpoint)
+    endpoint = check_endpoint(args.endpoint)
     log.info("PTU 배포 %s | 동시 요청 %s | 최대 시도 %s",
              args.ptu_deployment, args.burst, args.max_attempts)
 

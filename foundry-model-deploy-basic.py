@@ -11,12 +11,12 @@
     chat.completions  채팅 완성을 호출한다
 
     python foundry-model-deploy-basic.py \\
-        --endpoint https://<resource>.openai.azure.com \\
+        --endpoint https://<resource>.openai.azure.com/openai/v1/ \\
         --deployment gpt-image-2 \\
         --api images.generate --output out.png
 
     python foundry-model-deploy-basic.py \\
-        --endpoint https://<resource>.openai.azure.com \\
+        --endpoint https://<resource>.openai.azure.com/openai/v1/ \\
         --deployment gpt-image-2 \\
         --api images.edit --image out.png --prompt "add a red scarf" --output edited.png
 """
@@ -64,7 +64,7 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="Foundry 모델 배포를 한 번 호출하고 응답 헤더를 출력한다.")
     parser.add_argument("--endpoint", required=True,
-                        help="Foundry 리소스 엔드포인트. /openai/v1/ 는 자동으로 붙인다")
+                        help="모델 배포 엔드포인트. /openai/v1/ 까지 포함한 전체 URL")
     parser.add_argument("--deployment", required=True, help="모델 배포 이름")
     parser.add_argument("--api",
                         choices=(API_IMAGES_GENERATE, API_IMAGES_EDIT, API_CHAT_COMPLETIONS),
@@ -91,10 +91,11 @@ def parse_args():
     return args
 
 
-def base_url(raw):
-    """엔드포인트는 /openai/v1/ 로 끝나야 한다. 아니면 404 가 난다."""
-    url = raw.rstrip("/")
-    return url + "/" if url.endswith("/openai/v1") else url + "/openai/v1/"
+def check_endpoint(url):
+    """v1 데이터플레인 경로가 아니면 404 가 난다. 고쳐주지는 않고 경고만 한다."""
+    if not url.rstrip("/").endswith("/openai/v1"):
+        log.warning("엔드포인트가 /openai/v1/ 로 끝나지 않는다. 404 가 날 수 있다: %s", url)
+    return url
 
 
 def build_client(endpoint, api_key, token_scope):
@@ -180,7 +181,7 @@ def report_result(payload, args):
 
 def main():
     args = parse_args()
-    client = build_client(base_url(args.endpoint), args.api_key, args.token_scope)
+    client = build_client(check_endpoint(args.endpoint), args.api_key, args.token_scope)
     log.info("배포 %s 호출 (api=%s)", args.deployment, args.api)
 
     try:
