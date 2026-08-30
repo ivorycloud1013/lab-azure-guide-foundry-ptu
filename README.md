@@ -269,7 +269,7 @@ python foundry-model-deploy-basic.py \
 
 ### 3.2 `foundry-model-ptu-deploy-429-retry.py`
 
-PTU 배포가 돌려준 429 를 클라이언트에서 재시도하는 흐름을 다룬다. PTU 는 사용률이 100% 에 닿으면 요청을 큐잉하지 않고 즉시 429 를 돌려주며, 응답 헤더의 `retry-after-ms` 로 다시 요청할 시점을 알려준다.
+PTU 배포가 돌려준 429 를 클라이언트에서 재시도하는 흐름을 다룬다. PTU 는 사용률이 100% 에 닿으면 요청을 큐잉하지 않고 즉시 429 를 돌려주며, 응답 헤더의 `retry-after` ・ `retry-after-ms` 로 다시 요청할 시점을 알려준다.
 
 ```mermaid
 sequenceDiagram
@@ -284,8 +284,8 @@ sequenceDiagram
     Client->>EP: 추론 요청<br/>Authorization: Bearer / model = 배포 이름
     EP->>Deployment: Model deployment로 라우팅
     Deployment-->>EP: Status code=429 (Too Many Requests)
-    EP-->>Client: Status code=429 + 응답 헤더 retry-after-ms
-    Note over Client: 응답 헤더의 retry-after-ms 만큼 대기,<br/>없으면 백오프
+    EP-->>Client: Status code=429<br/>+ 응답 헤더 retry-after ・ retry-after-ms
+    Note over Client: 응답 헤더의 retry-after ・ retry-after-ms<br/>만큼 대기, 없으면 백오프
     Note over Deployment: 클라이언트가 대기하는 동안<br/>Utilization 이 100% 이하로 떨어짐
     Client->>EP: 동일 요청 재시도
     EP->>Deployment: Model deployment로 라우팅
@@ -315,13 +315,29 @@ python foundry-model-ptu-deploy-429-retry.py \
   --burst 20 --max-attempts 6
 ```
 
-응답 헤더는 [3.1.1](#311-응답-헤더-정보) 표에서 다룬다. `--api chat.completions` 인 경우, `--max-tokens` 로 지정한 값이 PTU [사용률 추정](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/provisioned-get-started)에 고려된다. 실제 생성량보다 `--max-tokens` 을 크게 잡으면 utilization 이 과도하게 증가하여 동시 처리량이 줄어든다. 단, 이미지 모델(`images.*`)은 이 파라미터를 받지 않는다. `retry-after-ms` 가 있으면 그 값을, 없으면 지수 백오프(1s → 2s → 4s …, 상한 30s)를 쓴다.
+응답 헤더는 [3.1.1](#311-응답-헤더-정보) 표에서 다룬다. `--api chat.completions` 인 경우, `--max-tokens` 로 지정한 값이 PTU [사용률 추정](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/provisioned-get-started)에 고려된다. 실제 생성량보다 `--max-tokens` 을 크게 잡으면 utilization 이 과도하게 증가하여 동시 처리량이 줄어든다. 단, 이미지 모델(`images.*`)은 이 파라미터를 받지 않는다. `retry-after` ・ `retry-after-ms` 가 있으면 그 값을, 없으면 지수 백오프(1s → 2s → 4s …, 상한 30s)를 쓴다.
 
+#### 3.2.1 openai SDK 의 `max_retries` 고려
 
+openai SDK 는 408/409/429/5xx HTTP status code 와 함께 전달된 `retry-after` ・ `retry-after-ms` 값을 고려하여 총 2회 재시도한다. Python 코드는 응답 헤더를 직접 보여주기 위해 `max_retries=0` 으로 설정하였다. 클라이언트에서 직접 `retry-after` ・ `retry-after-ms` 을 처리하지 않고자 한다면 `max_retries>=1` 으로 설정한다.
+
+```python
+OpenAI(...).with_options(max_retries=5).chat.completions.create(...)
+```
 
 ### 3.3 `foundry-model-ptu-deploy-429-spillover.py`
 
-PTU 배포가 429 를 돌려줄 때 Standard(PayGo) 배포로 넘기는 두 가지 방식을 다룬다. 넘기는 주체가 클라이언트냐 Foundry 서비스냐가 다르며, `--spillover-mode` 로 고른다.
+PTU 배포가 429 를 돌려줄 때 Standard(PayGo) 배포로 넘기는 방법은 세 가지다. 무엇이 전환을 수행하는지, 어디에 설정하는지가 다르다.
+
+| 방식 | 설정 위치 | 적용 범위 | 이 스크립트 |
+|---|---|---|---|
+| 배포 속성 `spilloverDeploymentName` | 포털 [Traffic spillover] 또는 REST | 해당 PTU 배포로 오는 **모든 요청** | `--spillover-mode` 미지정 |
+| 요청 헤더 `x-ms-spillover-deployment` | 추론 요청 헤더 | 헤더를 붙인 **요청만** | `--spillover-mode header` |
+| 클라이언트 전환 | 애플리케이션 코드 | 앱이 정한 조건 | `--spillover-mode client` |
+
+앞의 두 가지는 Foundry 서비스가 전환하고, 세 번째는 클라이언트가 전환한다. 서비스가 전환하는 두 방식은 Standard 배포가 **PTU 와 같은 리소스**에 있고 **모델과 버전이 같아야** 한다. 클라이언트 전환에는 그 제약이 없다.
+
+> 배포 속성과 요청 헤더가 모두 설정돼 있으면 **배포 속성이 우선**하고 헤더는 무시된다. 요청 단위로만 제어하려면 배포 속성을 비워 둔다.
 
 Python 코드의 입력 매개변수에 대한 설명은 아래와 같다.
 
@@ -329,16 +345,81 @@ Python 코드의 입력 매개변수에 대한 설명은 아래와 같다.
 |---|---|---|---|
 | `--endpoint` | Yes | | 모델 배포 엔드포인트. `/openai/v1/` 까지 포함한 전체 URL |
 | `--ptu-deployment` | Yes | | PTU 배포 이름 |
-| `--standard-deployment` | Yes | | spillover 대상 Standard(PayGo) 배포 이름 |
+| `--standard-deployment` | `client` / `header` 시 | | spillover 대상 Standard(PayGo) 배포 이름 |
 | `--api` | | `images.generate` | `images.generate` \| `chat.completions` |
 | `--auth` | | `entra-id` | `entra-id` \| `entra-id=<스코프>` \| `api-key=<키>` |
 | `--prompt` | | | 프롬프트 |
 | `--standard-endpoint` | | `--endpoint` 와 동일 | Standard 배포가 다른 리소스에 있을 때만 지정. 역시 전체 URL |
-| `--spillover-mode` | | `client` | `client` = 클라이언트가 429 를 받고 직접 Standard 배포로 재요청<br/>`header` = `x-ms-spillover-deployment` 헤더로 서비스에 전환을 위임 |
+| `--spillover-mode` | | (미지정) | 미지정 = 배포 속성에 맡기고 그대로 호출<br/>`header` = `x-ms-spillover-deployment` 헤더로 서비스에 전환을 위임<br/>`client` = 클라이언트가 429 를 받고 직접 Standard 배포로 재요청 |
 
 응답 헤더는 [3.1.1](#311-응답-헤더-정보) 표에서 `PTU` 에 해당하는 값만 다룬다.
 
-#### 3.3.1. 클라이언트 측 spillover
+#### 3.3.1. 배포 속성으로 상시 적용
+
+PTU 배포에 `spilloverDeploymentName` 을 지정해 두면 그 배포로 오는 모든 요청에 spillover 가 적용된다. 클라이언트 코드는 손댈 필요가 없다.
+
+포털에서는 [2.4](#24-상세-설정하여-모델-배포하기) 의 [Traffic spillover] 에서 지정하며, 이미 만든 배포에는 REST 로 나중에 추가할 수 있다.
+
+```bash
+curl -X PUT "https://management.azure.com/subscriptions/<SUB_ID>/resourceGroups/<RG>/providers/Microsoft.CognitiveServices/accounts/<ACCOUNT>/deployments/gpt-image-2?api-version=2024-10-01" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $(az account get-access-token --resource https://management.azure.com --query accessToken -o tsv)" \
+  -d '{
+        "sku": { "name": "GlobalProvisionedManaged", "capacity": 100 },
+        "properties": {
+          "spilloverDeploymentName": "gpt-image-2-paygo",
+          "model": { "format": "OpenAI", "name": "gpt-image-2", "version": "2026-04-21" }
+        }
+      }'
+```
+
+배포 단위로 켜고 끄는 방식이라 요청마다 다르게 가져갈 수는 없다. 그 제어가 필요하면 아래 두 방식을 쓴다.
+
+이 경우 클라이언트는 아무것도 하지 않는다. `--spillover-mode` 를 주지 않으면 스크립트도 평소처럼 호출만 하고, 전환이 일어났는지는 응답 헤더로 확인한다.
+
+```bash
+python foundry-model-ptu-deploy-429-spillover.py \
+  --endpoint https://<foundry-resource-subdomain>.openai.azure.com/openai/v1/ \
+  --ptu-deployment gpt-image-2
+```
+
+#### 3.3.2. 서비스 측 spillover — 요청 헤더
+
+요청에 `x-ms-spillover-deployment` 헤더를 붙여 전환을 Foundry 에 맡긴다. PTU 가 실패하면 서비스가 내부에서 Standard 배포로 넘기고 최종 결과만 돌려준다.
+
+- 클라이언트 왕복이 한 번이라 지연이 가장 적다
+- 헤더를 붙인 요청에만 적용되므로 워크로드별로 켜고 끌 수 있다
+- 전환은 한 번만 일어난다. 넘겨받은 Standard 배포가 다시 다른 곳으로 넘기지는 않는다
+- 전환 여부가 `x-ms-spillover-from-deployment` / `x-ms-spillover-error` 헤더로 응답에 실린다
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client as 클라이언트<br/>(openai SDK)
+    participant EP as Foundry project<br/>엔드포인트
+    participant PTU as PTU 배포
+    participant STD as Standard 배포
+
+    Client->>EP: 추론 요청<br/>x-ms-spillover-deployment: <standard 배포 이름>
+    EP->>PTU: PTU 우선 라우팅
+    PTU-->>EP: 429 (PTU 소진)
+    Note over EP: spilloverDeploymentName 또는<br/>요청 헤더가 있으면 자동 전환
+    EP->>STD: 동일 요청 재전달
+    STD-->>EP: 200 OK
+    EP-->>Client: 200 OK<br/>x-ms-deployment-name / x-ms-spillover-from-deployment / x-ms-spillover-error
+```
+
+```bash
+python foundry-model-ptu-deploy-429-spillover.py \
+  --endpoint https://<foundry-resource-subdomain>.openai.azure.com/openai/v1/ \
+  --ptu-deployment gpt-image-2 \
+  --standard-deployment gpt-image-2-paygo \
+  --spillover-mode header
+```
+
+Standard 배포마저 실패하면 Standard 배포의 상태 코드와 본문이 그대로 반환된다. 이때도 `x-ms-spillover-from-deployment` 와 `x-ms-spillover-error` 는 남아 있어 spillover 실패와 Standard 배포 직접 실패를 구분할 수 있다.
+
+#### 3.3.3. 클라이언트 측 spillover
 
 클라이언트가 PTU 배포의 응답을 보고 직접 전환한다. 상태 코드가 `400` / `429` / `500` / `503` 이면 `retry-after` 를 기다리지 않고 곧바로 Standard 배포로 같은 요청을 다시 보낸다.
 
@@ -369,46 +450,7 @@ python foundry-model-ptu-deploy-429-spillover.py \
   --spillover-mode client
 ```
 
-#### 3.3.2. 서비스 측 spillover
-
-요청에 `x-ms-spillover-deployment` 헤더를 붙여 전환을 Foundry 에 맡긴다. PTU 가 실패하면 서비스가 내부에서 Standard 배포로 넘기고 최종 결과만 돌려준다.
-
-- 클라이언트 왕복이 한 번이라 지연이 가장 적다
-- Standard 배포가 **PTU 와 같은 리소스**에 있고 **모델과 버전이 같아야** 한다
-- 전환은 한 번만 일어난다. 넘겨받은 Standard 배포가 다시 다른 곳으로 넘기지는 않는다
-- 전환 여부가 `x-ms-spillover-from-deployment` / `x-ms-spillover-error` 헤더로 응답에 실린다
-- 배포 속성 `spilloverDeploymentName` 으로 배포 단위 상시 적용도 가능하다. 이 스크립트는 요청 단위 헤더 방식을 쓴다
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Client as 클라이언트<br/>(openai SDK)
-    participant EP as Foundry project<br/>엔드포인트
-    participant PTU as PTU 배포
-    participant STD as Standard 배포
-
-    Client->>EP: 추론 요청<br/>x-ms-spillover-deployment: <standard 배포 이름>
-    EP->>PTU: PTU 우선 라우팅
-    PTU-->>EP: 429 (PTU 소진)
-    Note over EP: spilloverDeploymentName 또는<br/>요청 헤더가 있으면 자동 전환
-    EP->>STD: 동일 요청 재전달
-    STD-->>EP: 200 OK
-    EP-->>Client: 200 OK<br/>x-ms-deployment-name / x-ms-spillover-from-deployment / x-ms-spillover-error
-```
-
-```bash
-python foundry-model-ptu-deploy-429-spillover.py \
-  --endpoint https://<foundry-resource-subdomain>.openai.azure.com/openai/v1/ \
-  --ptu-deployment gpt-image-2 \
-  --standard-deployment gpt-image-2-paygo \
-  --spillover-mode header
-```
-
-Standard 배포마저 실패하면 Standard 배포의 상태 코드와 본문이 그대로 반환된다. 이때도 `x-ms-spillover-from-deployment` 와 `x-ms-spillover-error` 는 남아 있어 spillover 실패와 Standard 배포 직접 실패를 구분할 수 있다.
-
-배포 속성 `spilloverDeploymentName` 이 이미 설정돼 있으면 배포 설정이 우선하고 `x-ms-spillover-deployment` 헤더는 무시된다. 요청 단위로만 제어하려면 배포 속성을 비워 둔다.
-
-### 3.5 429 대응 전략 선택
+### 3.4 429 대응 전략 선택
 
 ```mermaid
 flowchart TB

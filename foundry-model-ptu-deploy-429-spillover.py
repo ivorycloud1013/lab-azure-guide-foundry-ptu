@@ -96,12 +96,13 @@ def parse_args():
     parser.add_argument("--endpoint", required=True,
                         help="모델 배포 엔드포인트. /openai/v1/ 까지 포함한 전체 URL")
     parser.add_argument("--ptu-deployment", required=True, help="PTU 배포 이름")
-    parser.add_argument("--standard-deployment", required=True,
-                        help="스필오버 대상 Standard(PayGo) 배포 이름")
+    parser.add_argument("--standard-deployment",
+                        help="spillover 대상 Standard(PayGo) 배포 이름. --spillover-mode 를 줄 때 필수")
     parser.add_argument("--standard-endpoint",
                         help="표준 배포가 다른 리소스에 있을 때만 지정 (기본: --endpoint 와 동일)")
-    parser.add_argument("--spillover-mode", choices=("client", "header"), default="client",
-                        help="client=클라이언트가 직접 전환, header=서비스에 위임 (기본 client)")
+    parser.add_argument("--spillover-mode", choices=("client", "header"),
+                        help="미지정=배포 속성 spilloverDeploymentName 에 맡기고 그대로 호출, "
+                             "header=요청 헤더로 서비스에 위임, client=클라이언트가 직접 전환")
     parser.add_argument("--auth", default=AUTH_ENTRA_ID, metavar="METHOD",
                         help=f"{AUTH_ENTRA_ID} (기본) | {AUTH_ENTRA_ID}=<스코프> | api-key=<키>")
     parser.add_argument("--api",
@@ -112,6 +113,8 @@ def parse_args():
 
     args = parser.parse_args()
     args.api_key, args.token_scope = resolve_auth(args.auth, parser)
+    if args.spillover_mode and not args.standard_deployment:
+        parser.error(f"--spillover-mode {args.spillover_mode} 에는 --standard-deployment 가 필요하다")
     if not args.prompt:
         args.prompt = (DEFAULT_IMAGE_PROMPT if args.api == API_IMAGES_GENERATE
                        else DEFAULT_CHAT_PROMPT)
@@ -213,6 +216,27 @@ def run_client_spillover(ptu_endpoint, standard_endpoint, args):
     return True
 
 
+def run_deployment_spillover(ptu_endpoint, args):
+    """배포 속성 spilloverDeploymentName 에 맡긴다.
+
+    클라이언트는 헤더도 붙이지 않고 재요청도 하지 않는다. 전환이 일어났는지는
+    응답 헤더로만 확인한다.
+    """
+    client = build_client(ptu_endpoint, args.api_key, args.token_scope)
+    try:
+        raw = call(client, args.ptu_deployment, args)
+    except openai.APIStatusError as exc:
+        dump_headers("PTU 응답", exc.status_code, exc.response.headers)
+        log.error("호출 실패: HTTP %s", exc.status_code)
+        if exc.status_code == 429:
+            log.error("배포에 spilloverDeploymentName 이 없거나 Standard 배포도 처리하지 못했다")
+        return False
+
+    dump_headers("PTU 응답", raw.http_response.status_code, raw.headers)
+    report_spillover(raw.headers)
+    return True
+
+
 def run_header_spillover(ptu_endpoint, args):
     """x-ms-spillover-deployment 헤더를 붙여 서비스가 넘기게 한다."""
     client = build_client(ptu_endpoint, args.api_key, args.token_scope)
@@ -237,12 +261,15 @@ def main():
     standard_endpoint = check_endpoint(args.standard_endpoint) if args.standard_endpoint else ptu_endpoint
 
     log.info("PTU %s -> Standard %s | 방식 %s",
-             args.ptu_deployment, args.standard_deployment, args.spillover_mode)
+             args.ptu_deployment, args.standard_deployment or "(배포 속성)",
+             args.spillover_mode or "미지정")
 
     if args.spillover_mode == "client":
         succeeded = run_client_spillover(ptu_endpoint, standard_endpoint, args)
-    else:
+    elif args.spillover_mode == "header":
         succeeded = run_header_spillover(ptu_endpoint, args)
+    else:
+        succeeded = run_deployment_spillover(ptu_endpoint, args)
 
     if not succeeded:
         raise SystemExit(1)
