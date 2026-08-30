@@ -94,8 +94,8 @@ PTU 는 배포된 PTU 수에 따라 hourly billing `$/PTU/hr` 으로 청구된�
 
 | 엔드포인트 | 값 |
 |---|---|
-| Project endpoint | `https://<service-subdomain>.services.ai.azure.com/...` |
-| Azure OpenAI endpoint | `https://<service-subdomain>.openai.azure.com/...` |
+| Project endpoint | `https://<foundry-resource-subdomain>.services.ai.azure.com/...` |
+| Azure OpenAI endpoint | `https://<foundry-resource-subdomain>.openai.azure.com/...` |
 | API key | Azure 구독 정책에 따라 비활성화될 수 있음 |
 
 ### 2.2 모델 검색
@@ -214,20 +214,20 @@ Microsoft Foundry 에 배포된 모델 엔드포인트에 대한 추론 요청�
 ```bash
 # 이미지 생성
 python foundry-model-deploy-basic.py \
-  --endpoint https://minwook-foundry-northce-resource.openai.azure.com/openai/v1/ \
+  --endpoint https://<foundry-resource-subdomain>.openai.azure.com/openai/v1/ \
   --deployment gpt-image-2 \
   --api images.generate
 
 # 생성한 이미지를 편집
 python foundry-model-deploy-basic.py \
-  --endpoint https://minwook-foundry-northce-resource.openai.azure.com/openai/v1/ \
+  --endpoint https://<foundry-resource-subdomain>.openai.azure.com/openai/v1/ \
   --deployment gpt-image-2 \
   --api images.edit --image ./output-images-generate.png \
   --prompt "add a red scarf"
 
 # 채팅 완성
 python foundry-model-deploy-basic.py \
-  --endpoint https://minwook-foundry-northce-resource.openai.azure.com/openai/v1/ \
+  --endpoint https://<foundry-resource-subdomain>.openai.azure.com/openai/v1/ \
   --deployment gpt-5-mini \
   --api chat.completions
 ```
@@ -330,7 +330,7 @@ flowchart LR
 
 ```bash
 python foundry-model-ptu-deploy-429-retry.py \
-  --endpoint https://minwook-foundry-northce-resource.openai.azure.com/openai/v1/ \
+  --endpoint https://<foundry-resource-subdomain>.openai.azure.com/openai/v1/ \
   --ptu-deployment gpt-image-2 \
   --burst 20 --max-attempts 6
 ```
@@ -375,7 +375,7 @@ sequenceDiagram
 
 ```bash
 python foundry-model-ptu-deploy-429-spillover.py \
-  --endpoint https://minwook-foundry-northce-resource.openai.azure.com/openai/v1/ \
+  --endpoint https://<foundry-resource-subdomain>.openai.azure.com/openai/v1/ \
   --ptu-deployment gpt-image-2 \
   --standard-deployment gpt-image-2-paygo
 ```
@@ -403,7 +403,7 @@ sequenceDiagram
 
 ```bash
 python foundry-model-ptu-deploy-429-spillover.py \
-  --endpoint https://minwook-foundry-northce-resource.openai.azure.com/openai/v1/ \
+  --endpoint https://<foundry-resource-subdomain>.openai.azure.com/openai/v1/ \
   --ptu-deployment gpt-image-2 \
   --standard-deployment gpt-image-2-paygo \
   --spillover-mode header
@@ -413,7 +413,7 @@ python foundry-model-ptu-deploy-429-spillover.py \
 
 ```bash
 python foundry-model-ptu-deploy-429-spillover.py \
-  --endpoint https://minwook-foundry-northce-resource.openai.azure.com/openai/v1/ \
+  --endpoint https://<foundry-resource-subdomain>.openai.azure.com/openai/v1/ \
   --ptu-deployment gpt-image-2 \
   --standard-deployment gpt-image-2-paygo \
   --spillover-mode both

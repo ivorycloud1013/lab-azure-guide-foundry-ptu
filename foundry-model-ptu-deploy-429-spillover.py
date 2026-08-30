@@ -11,7 +11,7 @@ header  x-ms-spillover-deployment 헤더로 Foundry 에 위임한다. 왕복이 
 header 방식은 무시된다.
 
     python foundry-model-ptu-deploy-429-spillover.py \\
-        --endpoint https://<resource>.openai.azure.com/openai/v1/ \\
+        --endpoint https://<foundry-resource-subdomain>.openai.azure.com/openai/v1/ \\
         --ptu-deployment gpt-image-2 \\
         --standard-deployment gpt-image-2-paygo \\
         --spillover-mode header

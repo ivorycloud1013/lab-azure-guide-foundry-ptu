@@ -6,7 +6,7 @@ retry-after-ms / retry-after 로 다시 올 시점을 알려준다. 그 값을 �
 헤더가 없을 때만 지수 백오프로 폴백한다.
 
     python foundry-model-ptu-deploy-429-retry.py \\
-        --endpoint https://<resource>.openai.azure.com/openai/v1/ \\
+        --endpoint https://<foundry-resource-subdomain>.openai.azure.com/openai/v1/ \\
         --ptu-deployment gpt-image-2 \\
         --burst 20 --max-attempts 6
 """

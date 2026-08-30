@@ -11,12 +11,12 @@
     chat.completions  채팅 완성을 호출한다
 
     python foundry-model-deploy-basic.py \\
-        --endpoint https://<resource>.openai.azure.com/openai/v1/ \\
+        --endpoint https://<foundry-resource-subdomain>.openai.azure.com/openai/v1/ \\
         --deployment gpt-image-2 \\
         --api images.generate            # ./output-images-generate.png 로 저장
 
     python foundry-model-deploy-basic.py \\
-        --endpoint https://<resource>.openai.azure.com/openai/v1/ \\
+        --endpoint https://<foundry-resource-subdomain>.openai.azure.com/openai/v1/ \\
         --deployment gpt-image-2 \\
         --api images.edit --image ./output-images-generate.png \\
         --prompt "add a red scarf"       # ./output-images-edit.png 로 저장
