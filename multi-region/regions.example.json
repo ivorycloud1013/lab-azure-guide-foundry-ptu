@@ -1,0 +1,19 @@
+{
+  "model": "gpt-image-2",
+  "deployment": "gpt-image-2",
+  "regions": {
+    "eastus2": {
+      "endpoint": "https://<eastus2-foundry-subdomain>.openai.azure.com/openai/v1/",
+      "ptu": 100
+    },
+    "australiaeast": {
+      "endpoint": "https://<australiaeast-foundry-subdomain>.openai.azure.com/openai/v1/",
+      "ptu": 100
+    }
+  },
+  "routes": {
+    "us-east-1": ["eastus2", "australiaeast"],
+    "us-east-2": ["eastus2", "australiaeast"],
+    "ap-southeast-2": ["australiaeast", "eastus2"]
+  }
+}

@@ -2,3 +2,5 @@
 __pycache__/
 *.pyc
 output-*.png
+multi-region/regions.json
+.pytest_cache/
