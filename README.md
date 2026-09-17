@@ -185,6 +185,7 @@ Repository 는 foundry 의 모델 배포 엔드포인트에 대한 Python 클라
 | `foundry-model-deploy-basic.py` | 기본 호출 로직. 이미지의 경우 `generate()` 과 `edit()` 호출 예시 제공 |
 | `foundry-model-ptu-deploy-429-spillover.py` | PTU 모델 배포의 spillover 제어 로직. 서버측과 클라이언트측 예시 제공 |
 | `foundry-model-ptu-deploy-429-retry.py` | PTU 모델 배포의 429 HTTP Status code `retry-after-ms` 제어 로직. 백오프 예시 제공 |
+| `multi-region/foundry-ptu-multi-region.py` | 여러 리전의 PTU 배포로 트래픽을 나누는 로직. 429 spillover 와 사용량 추정 기반 라우팅 제공 ([3.4](#34-multi-regionfoundry-ptu-multi-regionpy)) |
 
 Python 코드들에 대한 실행 환경은 다음과 같다.
 
@@ -416,6 +417,17 @@ python foundry-model-ptu-deploy-429-spillover.py \
   --spillover-mode client
 ```
 본 방법은 Not OK 인 응답 HTTP status code 를 클라이언트의 워크로드 특성에 맞춰 직접 제어한다. Spillover 에 대해 Foundry project 서비스가 관여하지 않으므로 응답 헤더에 `x-ms-spillover-*` 가 붙지 않는다. 어느 배포가 처리했는지는 `x-ms-deployment-name` 으로 확인한다.
+
+### 3.4 `multi-region/foundry-ptu-multi-region.py`
+
+여러 리전에 PTU 배포가 있을 때 클라이언트가 리전을 골라 보낸다. 서비스 측 spillover 는 같은 Foundry 리소스 안에서만 동작하므로, 리전 간 전환은 클라이언트가 맡는다. `--strategy` 로 두 방식을 고른다.
+
+| Strategy | 동작 |
+|---|---|
+| `429-spillover` | 429 를 받으면 다음 리전으로 넘기고, 그 리전은 `retry-after-ms` 동안 건너뛴다 |
+| `capacity-aware` | 응답 body 의 `usage` 로 리전별 PTU 사용량을 추정해, 넘칠 것 같으면 보내기 전에 다음 리전을 고른다 |
+
+Azure 인프라 준비, 설정 파일, 실행 방법은 [multi-region/README.md](multi-region/README.md) 에서 다룬다.
 
 ## 4. 마무리
 
