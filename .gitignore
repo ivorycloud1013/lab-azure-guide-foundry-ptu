@@ -2,3 +2,6 @@
 __pycache__/
 *.pyc
 output-*.png
+experiments/route-strategies/regions.json
+.pytest_cache/
+.DS_Store
