@@ -19,6 +19,7 @@ class Region:
     endpoint: str
     deployment: str
     ptu: int
+    resource_id: str | None = None   # Azure Monitor 조회용. 없으면 메트릭을 받지 않는다
 
 
 @dataclass(frozen=True)
@@ -51,7 +52,11 @@ def _parse_region(name, data, default_deployment):
     deployment = data.get("deployment", default_deployment)
     if not isinstance(deployment, str) or not deployment:
         raise ValueError(f"{where}: deployment 가 없다")
-    return Region(name=name, endpoint=endpoint, deployment=deployment, ptu=ptu)
+    resource_id = data.get("resourceId")
+    if resource_id is not None and (not isinstance(resource_id, str) or not resource_id):
+        raise ValueError(f"{where}: resourceId 는 비어 있지 않은 문자열이어야 한다")
+    return Region(name=name, endpoint=endpoint, deployment=deployment, ptu=ptu,
+                  resource_id=resource_id)
 
 
 def _parse_route(client_region, order, regions):

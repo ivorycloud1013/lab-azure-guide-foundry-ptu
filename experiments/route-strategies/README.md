@@ -1,6 +1,14 @@
-# Multi-region PTU 라우팅
+# Multi-region PTU 라우팅 실험
 
-여러 리전에 PTU 배포가 있을 때, 클라이언트가 리전을 골라 트래픽을 나눠 보내는 방법을 다룬다. 예시 구성은 다음과 같다.
+두 라우팅 전략을 실제 PTU 배포로 비교하기 위해 만든 실험 코드다. 부하 패턴 생성, 설정 파일, 두 전략의 공용 실행기가 들어 있어 [루트의 클라이언트 코드](../../README.md#34-multi-region-ptu-라우팅)보다 복잡하다. 실험 결과는 [`experiment-report.html`](experiment-report.html) 에 있고, 여기서 확인한 동작을 루트의 두 파일이 각각 하나씩 구현한다.
+
+| 이 디렉터리 | 루트 |
+|---|---|
+| `--strategy` 로 두 전략을 한 CLI 에서 고른다 | 전략마다 파일 하나 |
+| `regions.json` 과 `routes` 로 클라이언트 리전별 우선순위를 둔다 | `--region` 을 준 순서가 우선순위 |
+| `--load-ptu` 로 PTU 포화를 재현하는 묶음 발송 모드가 있다 | `--requests`・`--burst` 만 |
+
+예시 구성은 다음과 같다.
 
 | 구분 | 값 |
 |---|---|
@@ -77,7 +85,7 @@ sequenceDiagram
 
 ### 2.2 `capacity-aware`
 
-PTU 응답에는 남은 용량을 알려주는 헤더가 없다. `x-ratelimit-remaining-*` 는 Standard 배포 전용이다([3.1.1](../README.md#311-응답-헤더-정보) 참고). 그래서 서비스의 [사용률 계산 방식](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/provisioned-get-started#how-utilization-works)을 클라이언트에서 따라 한다.
+PTU 응답에는 남은 용량을 알려주는 헤더가 없다. `x-ratelimit-remaining-*` 는 Standard 배포 전용이다([3.1.1](../../README.md#311-응답-헤더-정보) 참고). 그래서 서비스의 [사용률 계산 방식](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/provisioned-get-started#how-utilization-works)을 클라이언트에서 따라 한다.
 
 1. 리전마다 용량 = `PTU 수 × 모델의 Input TPM per PTU` (분당 정규화 토큰). 100 PTU 의 `gpt-image-2` 는 분당 120,000 이다.
 2. 보내기 전에 요청 비용을 추정하고, 넣으면 용량을 넘는 리전은 건너뛴다.
@@ -139,6 +147,7 @@ sequenceDiagram
 | `model` | 모델 이름. PTU 환산값을 고르는 데 쓴다. 지원 목록은 `token_usage.py` 의 `PROFILES` |
 | `deployment` | 기본 배포 이름. 리전마다 다르면 `regions.<name>.deployment` 로 덮어쓴다 |
 | `regions.<name>.ptu` | 그 리전 배포의 PTU 수 |
+| `regions.<name>.resourceId` | (선택) Foundry 리소스의 ARM ID. `--record` 로 Azure Monitor 사용률을 함께 받을 때 필요하다. `az cognitiveservices account show -n <이름> -g <rg> --query id -o tsv` 로 얻는다 |
 | `routes.<클라이언트 리전>` | 그 클라이언트가 시도할 Azure 리전 순서 |
 
 ### 3.2 인자
@@ -146,7 +155,7 @@ sequenceDiagram
 | Arguments | Required | Default | Description |
 |---|---|---|---|
 | `--strategy` | Yes | | `429-spillover` \| `capacity-aware` |
-| `--config` | | `multi-region/regions.json` | 리전 설정 파일 |
+| `--config` | | `experiments/route-strategies/regions.json` | 리전 설정 파일 |
 | `--client-region` | | `$AWS_REGION` | `routes` 의 키. EC2 에서는 보통 환경변수로 충분하다 |
 | `--auth` | | `entra-id` | `entra-id` \| `entra-id=<스코프>` \| `api-key` |
 | `--tenant-id` | | `$AZURE_TENANT_ID` | Entra ID 토큰을 받을 테넌트. `az` 기본 테넌트와 리소스 테넌트가 다르면 지정한다. 지정하지 않으면 `Token tenant ... does not match resource tenant` 400 이 난다 |
@@ -161,18 +170,21 @@ sequenceDiagram
 | `--max-workers` | | `256` | 묶음 발송 모드: 동시에 떠 있을 수 있는 요청 상한 |
 | `--max-attempts` | | `5` | 요청 하나당 최대 시도 횟수. 리전을 바꿔 보내는 것도 한 번으로 센다 |
 | `--headroom` | | `1.0` | `capacity-aware` 전용. 추정 용량의 이 비율까지만 채운다 |
+| `--record` | | | 실행 기록을 JSON 으로 저장한다. 시도별 절대 UTC 시각, 추정 사용률 표본, Azure Monitor 메트릭이 한 파일에 들어간다 |
+| `--sample-interval` | | `1` | `--record` 전용. 추정 사용률을 찍는 간격(초) |
+| `--skip-metrics` | | | `--record` 전용. 실행 뒤 Azure Monitor 조회를 생략한다 |
 
 API key 는 리소스마다 다르므로 명령줄이 아니라 리전별 환경변수 `FOUNDRY_API_KEY_<REGION>` 로 받는다(예: `FOUNDRY_API_KEY_EASTUS2`, `FOUNDRY_API_KEY_AUSTRALIAEAST`).
 
 ```bash
 # 호주 EC2: 429 를 받으면 eastus2 로 넘긴다
-python multi-region/foundry-ptu-multi-region.py \
+python experiments/route-strategies/foundry-ptu-multi-region.py \
   --strategy 429-spillover \
   --client-region ap-southeast-2 \
   --requests 20 --concurrency 5
 
 # 호주 EC2: 추정 사용량이 80% 를 넘기 전에 eastus2 로 넘긴다
-python multi-region/foundry-ptu-multi-region.py \
+python experiments/route-strategies/foundry-ptu-multi-region.py \
   --strategy capacity-aware \
   --client-region ap-southeast-2 \
   --requests 20 --concurrency 5 --headroom 0.8
@@ -182,7 +194,7 @@ python multi-region/foundry-ptu-multi-region.py \
 
 ```bash
 # 두 리전 합계(200 PTU)가 1분에 처리할 양을 5초마다 나눠 3분 동안 보낸다
-python multi-region/foundry-ptu-multi-region.py \
+python experiments/route-strategies/foundry-ptu-multi-region.py \
   --strategy capacity-aware \
   --client-region ap-southeast-2 \
   --load-ptu 200 --interval 5 --duration 180
@@ -190,11 +202,57 @@ python multi-region/foundry-ptu-multi-region.py \
 
 실행이 끝나면 리전별 처리 건수와 추정 사용률, 총 시도 횟수를 출력한다. 두 strategy 를 같은 부하로 돌려 **총 시도 − 요청 수**(= 429 등으로 다시 보낸 횟수)를 비교하면 차이가 드러난다.
 
-### 3.3 테스트
+### 3.3 장시간 실행과 기록
+
+3분 실험은 실행 시작 시각을 분 단위로만 남겨, 나중에 Azure Monitor 의 분 단위 값과 맞출 때 정렬을 사후에 추정해야 했다. 표본도 실행·리전당 4개뿐이라 결론이 나지 않았다([`experiment-report.html`](experiment-report.html) 참고). `--record` 는 그 두 가지를 함께 해결한다.
+
+| 남는 것 | 쓰임 |
+|---|---|
+| `requests[].attempt_log[]` | 시도마다 리전·상태·**보낸 절대 UTC 시각**·받은 시각·예약량. 묶음을 벽시계 위에 다시 만들 수 있다 |
+| `levels[]` | `--sample-interval` 마다 찍은 리전별 추정 사용률. 리포트의 버킷 수위 계열 |
+| `metrics.<리전>[]` | `AzureOpenAIProvisionedManagedUtilizationV2` 의 분 단위 값. 실행 직후, **배포를 지우기 전에** 받는다 |
+
+```bash
+# 두 strategy 를 각각 60분씩. PTU 는 배포 시각부터 과금되므로 연달아 돌린다.
+for S in 429-spillover capacity-aware; do
+  python experiments/route-strategies/foundry-ptu-multi-region.py \
+    --strategy $S \
+    --client-region ap-southeast-2 \
+    --load-ptu 200 --interval 5 --duration 3600 \
+    --record "run-$S.json"
+  sleep 90
+done
+```
+
+메트릭을 함께 받으려면 `regions.json` 의 각 리전에 `resourceId` 가 있어야 하고, 그 리소스에 `Monitoring Reader` 권한이 필요하다. 없으면 조회를 건너뛰고 실행 기록만 남는다.
+
+> [!IMPORTANT]
+> PTU 는 배포가 존재한 시간만큼 과금된다. 실행이 끝나면 **반드시 배포를 삭제한다.** 메트릭 조회를 실행 직후에 넣은 이유이기도 하다.
+
+### 3.4 기록으로 리포트 만들기
+
+`--record` 로 남긴 JSON 두 개를 `build_report.py` 에 주면 리포트 HTML 이 나온다. 본문에 숫자를 손으로 옮겨 적지 않으므로, 표와 차트가 어긋날 일이 없다.
+
+```bash
+python experiments/route-strategies/build_report.py \
+  experiments/route-strategies/run-429-spillover.json \
+  experiments/route-strategies/run-capacity-aware.json
+```
+
+| 옵션 | 뜻 |
+|---|---|
+| `--step` | 차트 묶음 간격(초). 60분 실행은 30초가 적당하다 (120칸) |
+| `--level-step` | 버킷 수위 계열을 올릴 격자 간격(초) |
+| `--phase-step` | 위상 탐색 간격(초). 좁힐수록 느려진다 |
+| `--template` / `--out` | 템플릿과 출력 경로 |
+
+생성기는 두 실행의 실측 점을 한꺼번에 놓고 **창 길이 `width` 와 위상 `phase`** 를 격자 탐색으로 맞춘다. `AzureOpenAIProvisionedManagedUtilizationV2` 가 순간값 게이지인지 그 분의 처리량인지는 사실 같은 식의 특수한 경우(`width`=60, `phase`=60)라, 물어야 할 것이 둘 중 무엇이냐가 아니라 `(width, phase)` 가 얼마냐이기 때문이다. 자세한 것은 [`experiment-report-60min.html`](experiment-report-60min.html) 에 있다.
+
+### 3.5 테스트
 
 ```bash
 pip install pytest
-python -m pytest multi-region/tests
+python -m pytest experiments/route-strategies/tests
 ```
 
 ---
@@ -204,6 +262,7 @@ python -m pytest multi-region/tests
 | 파일 | 역할 |
 |---|---|
 | `experiment-report.html` | 실제 PTU 배포로 두 strategy 를 비교한 실험 리포트 (2026-09-17, 브라우저로 연다) |
+| `regions.example.json` | 설정 파일 예시. `regions.json` 으로 복사해 엔드포인트를 채운다 |
 | `foundry-ptu-multi-region.py` | CLI. 설정을 읽고 요청을 동시에 보낸 뒤 요약한다 |
 | `routing.py` 의 `Primary` | 지금 요청을 받는 리전과 전환 규칙 |
 | `load_pattern.py` | 묶음 발송 모드의 요청 일정과 실행 |
@@ -212,3 +271,12 @@ python -m pytest multi-region/tests
 | `token_usage.py` | 모델별 PTU 환산값, `usage` → 정규화 토큰, 요청 비용 추정 |
 | `region_config.py` | `regions.json` 읽기·검증 |
 | `foundry_client.py` | 리전별 openai 클라이언트와 인증, 호출 결과 변환 |
+| `run_record.py` | 실행 기록 JSON 조립·저장 |
+| `sampler.py` | 실행 중 리전별 추정 사용률을 주기적으로 기록 |
+| `metrics.py` | Azure Monitor 사용률 메트릭 조회 (`az` CLI) |
+| `experiment-report-60min.html` | 두 strategy 를 각각 60분 돌린 2차 실험 리포트 (2026-09-18, `build_report.py` 가 만든다) |
+| `build_report.py` | 실행 기록 JSON → 리포트 HTML. 자리표시자를 하나라도 못 채우면 실패한다 |
+| `report_template.html` | 리포트 본문과 차트 엔진. 숫자는 `{{자리표시자}}` 로 비워 둔다 |
+| `report_data.py` | 실행 기록을 구간·수위·전환·실측 점으로 되돌린다 |
+| `report_figures.py` | 차트가 읽는 `DATA`·`METRIC` 과 본문 머릿수 조립 |
+| `metric_fit.py` | 실측값이 재는 창 길이와 위상을 격자 탐색으로 맞춘다 |

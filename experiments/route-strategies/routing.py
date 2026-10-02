@@ -10,6 +10,7 @@
 
 import logging
 import threading
+import time
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
@@ -47,11 +48,27 @@ class Choice:
 
 
 @dataclass(frozen=True)
+class Attempt:
+    """시도 하나의 기록. 시각은 절대 UTC epoch 초다.
+
+    묶음을 벽시계 위에 놓으려면 실행 시작 시각만으로는 부족하다. 시도마다 보낸 시각을
+    남겨야 Azure Monitor 의 분 단위 값과 정렬 없이 맞출 수 있다.
+    """
+
+    region: str
+    status: int | None
+    sent_at: float
+    done_at: float
+    estimate: float
+
+
+@dataclass(frozen=True)
 class RouteOutcome:
     succeeded: bool
     region: str | None
     attempts: int
     status: int | None
+    attempt_log: tuple = ()
 
 
 def retry_after_seconds(headers):
@@ -184,32 +201,39 @@ def _claim(tracker, order, estimator, pick, sleep, label):
         waited += wait
 
 
-def route_request(send, order, tracker, estimator, pick, max_attempts, sleep, label=""):
+def route_request(send, order, tracker, estimator, pick, max_attempts, sleep, label="",
+                  wall_clock=time.time):
     """요청 하나를 성공하거나 max_attempts 에 닿을 때까지 리전을 옮겨 가며 보낸다.
 
     send(region) -> CallResult
     pick(tracker, order, estimate) -> Choice
+    wall_clock() -> 절대 UTC epoch 초. 시도 기록의 시각에만 쓴다.
     """
     result = None
+    attempt_log = []
+
     for attempt in range(1, max_attempts + 1):
         region, utilization, estimate = _claim(tracker, order, estimator, pick, sleep, label)
         log.info("%s 시도 %s -> %s (추정 사용률 %.0f%%, 예약 %.0f)",
                  label, attempt, region, utilization * 100, estimate)
+        sent_at = wall_clock()
         result = send(region)
+        attempt_log.append(Attempt(region, result.status, sent_at, wall_clock(), estimate))
 
         if result.status == STATUS_OK:
             _record_success(tracker, estimator, region, estimate, result)
             log.info("%s 시도 %s <- %s HTTP 200 (x-ms-region %s)", label, attempt, region,
                      _header(result.headers, "x-ms-region"))
-            return RouteOutcome(True, region, attempt, result.status)
+            return RouteOutcome(True, region, attempt, result.status, tuple(attempt_log))
 
         tracker.release(region, estimate)
         log.warning("%s 시도 %s <- %s HTTP %s %s", label, attempt, region,
                     result.status, result.error or "")
         if not _record_failure(tracker, region, result):
-            return RouteOutcome(False, region, attempt, result.status)
+            return RouteOutcome(False, region, attempt, result.status, tuple(attempt_log))
 
-    return RouteOutcome(False, None, max_attempts, result.status if result else None)
+    return RouteOutcome(False, None, max_attempts,
+                        result.status if result else None, tuple(attempt_log))
 
 
 def _header(headers, name):

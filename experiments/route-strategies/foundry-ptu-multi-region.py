@@ -14,10 +14,13 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import metrics
+import run_record
 from capacity_tracker import CapacityTracker
 from foundry_client import AUTH_ENTRA_ID, build_clients, make_sender, resolve_auth
 from load_pattern import paced_batches, requests_per_minute, run_paced
 from region_config import load_config, region_order
+from sampler import UtilizationSampler
 from routing import STRATEGIES, Primary, pickers_for, route_request
 from token_usage import API_CHAT_COMPLETIONS, API_IMAGES_GENERATE, CostEstimator, get_profile
 
@@ -102,6 +105,12 @@ def parse_args():
                         help="요청 하나당 최대 시도 횟수. 리전 전환도 한 번으로 센다 (기본 5)")
     parser.add_argument("--headroom", type=headroom_ratio, default=1.0,
                         help="capacity-aware 전용. 추정 용량의 이 비율까지만 채운다 (기본 1.0)")
+    parser.add_argument("--record", metavar="PATH",
+                        help="실행 기록(시도별 절대 UTC 시각·추정 사용률·메트릭)을 JSON 으로 저장한다")
+    parser.add_argument("--sample-interval", type=positive_float, default=1.0,
+                        help="--record 전용. 추정 사용률을 찍는 간격(초) (기본 1)")
+    parser.add_argument("--skip-metrics", action="store_true",
+                        help="--record 전용. 실행 뒤 Azure Monitor 조회를 생략한다")
 
     args = parser.parse_args()
     if args.load_ptu and (args.requests or args.concurrency):
@@ -153,6 +162,36 @@ def run_load(args, profile, estimator, run_one):
     return run_paced(batches, run_one, max_workers=args.max_workers)
 
 
+def save_record(args, config, regions, capacities, profile,
+                outcomes, sampler, started_at, finished_at):
+    """실행 기록과 Azure Monitor 메트릭을 한 파일로 남긴다.
+
+    메트릭은 PTU 배포를 지우기 전에 받아 두는 편이 안전하므로 실행 직후에 부른다.
+    """
+    levels = sampler.stop() if sampler else ()
+    resource_ids = {name: region.resource_id for name, region in regions.items()}
+    collected = {} if args.skip_metrics else metrics.fetch_all(
+        resource_ids, started_at, finished_at)
+
+    record = run_record.build(
+        run={"strategy": args.strategy, "client_region": args.client_region,
+             "api": args.api, "model": config.model, "headroom": args.headroom,
+             "load_ptu": args.load_ptu, "interval": args.interval,
+             "duration": args.duration, "max_attempts": args.max_attempts,
+             "tpm_per_ptu": profile.tpm_per_ptu,
+             "started_at": started_at, "finished_at": finished_at},
+        regions={name: {"ptu": region.ptu, "deployment": region.deployment,
+                        "endpoint": region.endpoint, "capacity_tpm": capacities[name],
+                        "resource_id": region.resource_id}
+                 for name, region in regions.items()},
+        outcomes=outcomes,
+        metrics=collected)
+    record["levels"] = list(levels)
+    run_record.write(args.record, record)
+    log.info("실행 기록 저장: %s (요청 %s · 사용률 표본 %s · 메트릭 리전 %s)",
+             args.record, len(record["requests"]), len(levels), len(collected))
+
+
 def main():
     args, parser = parse_args()
     try:
@@ -181,6 +220,11 @@ def main():
                              max_attempts=args.max_attempts, sleep=jittered_sleep,
                              label=f"req {index}")
 
+    sampler = None
+    if args.record:
+        sampler = UtilizationSampler(tracker, order, interval=args.sample_interval).start()
+    started_at = time.time()
+
     if args.load_ptu:
         outcomes = run_load(args, profile, estimator, run_one)
     else:
@@ -188,7 +232,11 @@ def main():
         with ThreadPoolExecutor(max_workers=args.concurrency, thread_name_prefix="w") as pool:
             outcomes = list(pool.map(run_one, range(1, args.requests + 1)))
 
+    finished_at = time.time()
     log_summary(outcomes, order, tracker)
+    if args.record:
+        save_record(args, config, regions, capacities, profile,
+                    outcomes, sampler, started_at, finished_at)
     if not all(outcome.succeeded for outcome in outcomes):
         raise SystemExit(1)
 

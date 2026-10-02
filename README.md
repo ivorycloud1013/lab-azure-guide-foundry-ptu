@@ -185,7 +185,8 @@ Repository 는 foundry 의 모델 배포 엔드포인트에 대한 Python 클라
 | `foundry-model-deploy-basic.py` | 기본 호출 로직. 이미지의 경우 `generate()` 과 `edit()` 호출 예시 제공 |
 | `foundry-model-ptu-deploy-429-spillover.py` | PTU 모델 배포의 spillover 제어 로직. 서버측과 클라이언트측 예시 제공 |
 | `foundry-model-ptu-deploy-429-retry.py` | PTU 모델 배포의 429 HTTP Status code `retry-after-ms` 제어 로직. 백오프 예시 제공 |
-| `multi-region/foundry-ptu-multi-region.py` | 여러 리전의 PTU 배포로 트래픽을 나누는 로직. 429 spillover 와 사용량 추정 기반 라우팅 제공 ([3.4](#34-multi-regionfoundry-ptu-multi-regionpy)) |
+| `ptu-multi-regions-429-spillover.py` | 여러 리전의 PTU 배포 중 429 를 돌려준 리전을 떠나는 라우팅 ([3.4](#34-multi-region-ptu-라우팅)) |
+| `ptu-multi-regions-capacity-aware.py` | 응답 `usage` 로 리전별 PTU 사용량을 추정해 429 전에 떠나는 라우팅 ([3.4](#34-multi-region-ptu-라우팅)) |
 
 Python 코드들에 대한 실행 환경은 다음과 같다.
 
@@ -418,26 +419,125 @@ python foundry-model-ptu-deploy-429-spillover.py \
 ```
 본 방법은 Not OK 인 응답 HTTP status code 를 클라이언트의 워크로드 특성에 맞춰 직접 제어한다. Spillover 에 대해 Foundry project 서비스가 관여하지 않으므로 응답 헤더에 `x-ms-spillover-*` 가 붙지 않는다. 어느 배포가 처리했는지는 `x-ms-deployment-name` 으로 확인한다.
 
-### 3.4 `multi-region/foundry-ptu-multi-region.py`
+### 3.4 Multi-region PTU 라우팅
 
-여러 리전에 PTU 배포가 있을 때 클라이언트가 리전을 골라 보낸다. 서비스 측 spillover 는 같은 Foundry 리소스 안에서만 동작하므로, 리전 간 전환은 클라이언트가 맡는다. `--strategy` 로 두 방식을 고른다.
+리전마다 PTU 배포가 있을 때 클라이언트가 리전을 골라 보낸다. 서비스 측 spillover([3.3](#33-foundry-model-ptu-deploy-429-spilloverpy))가 넘기는 대상은 **같은 Foundry 리소스 안의 배포**라 리전을 넘지 못한다. 리전 간 전환은 클라이언트나 API Management 같은 게이트웨이가 맡아야 한다. Front Door·Traffic Manager 는 헬스 프로브 기반이라 요청 단위 429 를 보고 경로를 바꾸지 않는다.
 
-| Strategy | 동작 |
-|---|---|
-| `429-spillover` | 429 를 받으면 다음 리전으로 넘기고, 그 리전은 `retry-after-ms` 동안 건너뛴다 |
-| `capacity-aware` | 응답 body 의 `usage` 로 리전별 PTU 사용량을 추정해, 넘칠 것 같으면 보내기 전에 다음 리전을 고른다 |
+두 파일 모두 `--region` 을 준 순서가 우선순위다. 첫 리전이 primary 이고, primary 가 막히면 다음 리전이 새 primary 가 된다. 원래 리전이 풀려도 되돌아가지 않는다. **언제 옮기는지만 다르다.**
 
-Azure 인프라 준비, 설정 파일, 실행 방법은 [multi-region/README.md](multi-region/README.md) 에서 다룬다.
+| 파일 | primary 를 옮기는 시점 | 기준 |
+|---|---|---|
+| `ptu-multi-regions-429-spillover.py` | primary 가 429 를 **돌려준 뒤** | 응답 헤더 `retry-after-ms` |
+| `ptu-multi-regions-capacity-aware.py` | primary 가 429 를 **돌려주기 전** | 응답 body `usage` 로 추정한 사용량 |
+
+리전을 옮기는 것은 **429 뿐이다.** 404·408·5xx·연결 실패는 리전을 옮기지 않고 같은 리전에 다시 보낸다. 429 가 아닌 실패로 리전을 버리면 그 리전의 PTU 를 통째로 놀리게 된다. 400·401·403 은 요청 자체의 문제라 어느 리전에서도 같으므로 바로 실패로 끝낸다.
+
+리전마다 배포 이름을 같게 두면 `--deployment` 하나로 끝난다. 인증은 두 리소스 모두에 `Cognitive Services OpenAI User` 가 필요하고, `--auth api-key` 를 쓰면 키를 리전별 환경변수 `FOUNDRY_API_KEY_<REGION>` 에서 읽는다. `az` 로그인 기본 테넌트와 리소스 테넌트가 다르면 `--tenant-id` 를 준다. 지정하지 않으면 `Token tenant ... does not match resource tenant` 400 이 난다.
+
+#### 3.4.1 `ptu-multi-regions-429-spillover.py`
+
+primary 에 보내다가 429 를 받으면 **기다리지 않고** 그 요청을 다음 리전으로 다시 보내고, 그 리전을 새 primary 로 삼는다. 429 를 받은 리전은 `retry-after-ms` 동안 쓰지 않으므로 같은 리전에 429 가 반복되지 않는다.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client as 클라이언트
+    participant AUE as australiaeast<br/>PTU
+    participant EUS as eastus<br/>PTU
+
+    Client->>AUE: 추론 요청 (primary = australiaeast)
+    AUE-->>Client: 429 + retry-after-ms
+    Note over Client: australiaeast 를 retry-after-ms 동안 제외<br/>primary 를 eastus 로 바꿈
+    Client->>EUS: 같은 요청을 대기 없이 다시 보냄
+    EUS-->>Client: 200 OK
+    Client->>EUS: 다음 요청부터 eastus 가 primary
+    EUS-->>Client: 200 OK
+```
+
+```bash
+python ptu-multi-regions-429-spillover.py \
+  --region australiaeast=https://<australiaeast-subdomain>.openai.azure.com/openai/v1/ \
+  --region eastus=https://<eastus-subdomain>.openai.azure.com/openai/v1/ \
+  --deployment gpt-image-2 \
+  --requests 20 --burst 5
+```
+
+#### 3.4.2 `ptu-multi-regions-capacity-aware.py`
+
+PTU 배포에는 남은 용량을 알려주는 헤더가 없다. `x-ratelimit-remaining-*` 은 Standard 배포에만 붙는다([3.1.1](#311-응답-헤더-정보)). 그래서 서비스의 [사용률 계산 방식](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/provisioned-get-started#how-utilization-works)을 클라이언트에서 따라 한다. 리전마다 버킷을 하나 두고, 보낼 때 추정치만큼 채우고 응답의 `usage` 로 보정하며, 버킷은 PTU 수에 비례한 속도로 계속 뺀다.
+
+| 값 | 식 | 100 PTU `gpt-image-2` 의 예 |
+|---|---|---|
+| 리전 용량 `C` | `PTU 수 × 모델의 Input TPM per PTU` | `100 × 1,200` = 분당 120,000 |
+| 빠지는 속도 `r` | `C ÷ 60` | 초당 2,000 |
+| 현재 수위 `L(t)` | `max(0, 직전 수위 − 경과 시간 × r)` | 요청마다 다시 계산 |
+| 보낼 수 있는가 | `L(t) + 이번 요청 추정치 ≤ C × headroom` | `--headroom` 기본 1.0 |
+| 응답 뒤 보정 | `L += 실제 정규화 토큰 − 추정치` | |
+| 429 를 받으면 | `L = C`, `retry-after-ms` 동안 제외 | 추정 오차를 서비스 신호로 바로잡는다 |
+
+요청 하나의 정규화 토큰은 [sizing 문서](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/provisioned-throughput-sizing)의 공식으로 환산한다. 모델별 `Input TPM per PTU` 와 출력 비율은 파일 안 `PROFILES` 에 있고, `--model` 로 고른다.
+
+| API | usage 필드 | 정규화 토큰 |
+|---|---|---|
+| `chat.completions` | `prompt_tokens`, `completion_tokens`, `prompt_tokens_details.cached_tokens` | `(prompt − cached) + 출력 비율 × completion` |
+| `images.generate` | `input_tokens`, `output_tokens`, `input_tokens_details.image_tokens` | `텍스트 입력 + (이미지 입력 + 이미지 출력 × 3.75) × 1.6` |
+
+`chat.completions` 는 서비스와 같이 `prompt 토큰 + max_tokens × 출력 비율` 을 미리 예약한다. `images.generate` 는 `max_tokens` 가 없으므로 직전 응답의 실제 비용을 다음 추정치로 쓴다.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client as 클라이언트
+    participant AUE as australiaeast<br/>PTU
+    participant EUS as eastus<br/>PTU
+
+    Note over Client: australiaeast 수위 0 → 1,187 예약
+    Client->>AUE: 추론 요청
+    AUE-->>Client: 200 OK + usage
+    Note over Client: usage 로 실제 비용 보정
+    Note over Client: 수위 + 이번 요청 > 120,000<br/>primary 를 eastus 로 바꿈
+    Client->>EUS: 다음 요청 (429 를 받기 전에 전환)
+    EUS-->>Client: 200 OK + usage
+```
+
+```bash
+python ptu-multi-regions-capacity-aware.py \
+  --region australiaeast=https://<australiaeast-subdomain>.openai.azure.com/openai/v1/,100 \
+  --region eastus=https://<eastus-subdomain>.openai.azure.com/openai/v1/,100 \
+  --deployment gpt-image-2 --model gpt-image-2 \
+  --requests 20 --burst 5
+```
+
+> [!IMPORTANT]
+> 추정치는 **이 프로세스가 보낸 트래픽만** 반영한다. 여러 클라이언트가 같은 PTU 를 함께 쓰면 각자 실제보다 낮게 추정하고, 그 차이는 429 를 받을 때 바로잡힌다. `--headroom 0.8` 처럼 여유를 두면 다른 클라이언트 몫을 어느 정도 흡수한다. 추정치를 공유하려면 Redis 같은 공용 저장소나 API Management 가 필요하다.
+
+#### 3.4.3 두 방식의 실측 비교
+
+`eastus` 와 `australiaeast` 에 `gpt-image-2` 를 100 PTU 씩 배포하고, 두 리전 합계 용량(200 PTU)만큼의 이미지 생성 요청을 5초마다 나눠 3분씩 보냈다. 전략마다 609건이다.
+
+| Strategy | 요청 | 시도 | 429 | 리전별 처리 | primary 전환 | p50 / p90 |
+|---|---|---|---|---|---|---|
+| `429-spillover` | 609 | 638 | 29 | 403 / 206 | 2회 | 13.9s / 17.2s |
+| `capacity-aware` | 609 | 609 | 0 | 370 / 239 | 3회 | 14.0s / 16.7s |
+
+- **429 는 즉시 돌아오지 않는다.** 429 응답 자체가 1.9–6.5초(중앙값 4.3초) 걸렸고, 그만큼이 그 요청의 응답 시간에 더해진다. 429 를 한 번 받은 29건은 p50 이 18.9초로, 받지 않은 580건(13.9초)보다 5.0초 길었다.
+- **primary 는 한 번 잡으면 약 1분을 간다.** 빈 버킷이 두 배 부하를 받으면 1분치 여유가 55–60초 만에 차기 때문이다. 두 리전이 반반씩 나눠 받는 그림이 아니라 1분 단위로 번갈아 몰아 받는 그림이다.
+- **처리량 배분은 시작 리전에 유리하다.** 3분 실행에서 첫 리전이 더 많이 받았고, 더 오래 돌리면 격차는 줄어든다.
+
+측정 방법, 5초 구간별 그래프, 리전별 지연, 한계는 [`experiments/route-strategies/experiment-report.html`](experiments/route-strategies/experiment-report.html) 에 있다. 이 실험에 쓴 코드(부하 패턴 생성, 설정 파일, 두 전략 공용 실행기)는 [`experiments/route-strategies/`](experiments/route-strategies/README.md) 에 있고, Azure 인프라 준비와 AWS EC2 에서의 접근 방법도 거기서 다룬다.
 
 ## 4. 마무리
 
-PTU 모델 배포는 정해진 처리 용량내에서 추론을 수행하므로, Not OK 되는 응답에 대해서 결정 로직이 필요하다. 문제는 "비용과 지연 중 무엇을 지킬 것인지" 이고, 결정에 따라 사용할 Python 코드는 아래와 같다.
+PTU 모델 배포는 정해진 처리 용량내에서 추론을 수행하므로, Not OK 되는 응답에 대해서 결정 로직이 필요하다. 한 리전에서는 "비용과 지연 중 무엇을 지킬 것인지"가 문제이고, 여러 리전에 배포가 있다면 "언제 리전을 옮길 것인지"가 하나 더 붙는다. 결정에 따라 사용할 Python 코드는 아래와 같다.
 
 ```mermaid
 flowchart LR
     Code{"응답"}
     Code -->|"200"| Done["Done"]
-    Code -->|"non-200"| Trade{"비용 vs. 지연"}
+    Code -->|"non-200"| Where{"PTU 배포가<br/>여러 리전에 있나"}
+
+    Where -->|"한 리전"| Trade{"비용 vs. 지연"}
+    Where -->|"여러 리전"| When{"언제 리전을<br/>옮길 것인가"}
 
     Trade -->|"추가 비용 없어야 함<br/>지연 감수"| Retry["[Retry] foundry-model-ptu-deploy-429-retry.py"]
     Trade -->|"추가 지연 없어야 함<br/>비용 감수"| Spill{"spillover 방식"}
@@ -446,14 +546,21 @@ flowchart LR
     Spill -->|"클라이언트 직접 제어"| Client["[Spillover] foundry-model-ptu-deploy-429-spillover.py --spillover-mode client"]
     Spill -->|"static 한 배포 속성"| Prop["[Spillover] foundry-model-ptu-deploy-429-spillover.py (--spillover-mode 미지정)"]
 
+    When -->|"429 를 받은 뒤<br/>추가 상태 없이"| Region429["[Multi-region] ptu-multi-regions-429-spillover.py"]
+    When -->|"429 를 받기 전<br/>usage 로 사용량 추정"| RegionCap["[Multi-region] ptu-multi-regions-capacity-aware.py"]
+
     Retry --> Done
     Header --> Done
     Client --> Done
     Prop --> Done
+    Region429 --> Done
+    RegionCap --> Done
 
     style Done fill:#dcfce7,stroke:#16a34a
     style Retry fill:#eef2ff,stroke:#6366f1
     style Header fill:#fef3c7,stroke:#d97706
     style Client fill:#fae8ff,stroke:#a21caf
     style Prop fill:#e0f2fe,stroke:#0284c7
+    style Region429 fill:#ffe4e6,stroke:#e11d48
+    style RegionCap fill:#ecfccb,stroke:#65a30d
 ```

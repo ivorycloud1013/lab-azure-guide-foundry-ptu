@@ -4,7 +4,8 @@
   "regions": {
     "eastus2": {
       "endpoint": "https://<eastus2-foundry-subdomain>.openai.azure.com/openai/v1/",
-      "ptu": 100
+      "ptu": 100,
+      "resourceId": "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<eastus2-foundry-resource>"
     },
     "australiaeast": {
       "endpoint": "https://<australiaeast-foundry-subdomain>.openai.azure.com/openai/v1/",
