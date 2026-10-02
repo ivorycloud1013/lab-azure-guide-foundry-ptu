@@ -1,0 +1,463 @@
+<title>PTU 멀티리전 라우팅 실험 · 60분</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
+<style>
+:root {
+  --paper: #f6f7f9;
+  --surface: #ffffff;
+  --ink: #1b2130;
+  --muted: #5b6475;
+  --rule: #dfe3ea;
+  --aue: #b86e12;
+  --aue-soft: #f6e7d2;
+  --eus: #2f64ad;
+  --eus-soft: #dde8f6;
+  --throttle: #c0392b;
+  --throttle-soft: #f8dcd8;
+  --good: #1f7a4d;
+  --good-soft: #d9efe3;
+  --code-bg: #eef0f4;
+  --throttle-2: #e8877b;
+  --tip-bg: #1b2130;
+  --tip-ink: #f6f7f9;
+  --sans: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #12151c;
+    --surface: #1a1f29;
+    --ink: #e6e9ef;
+    --muted: #9aa3b3;
+    --rule: #2c3340;
+    --aue: #e3a14a;
+    --aue-soft: #3a2c19;
+    --eus: #7aa7e6;
+    --eus-soft: #1d2b40;
+    --throttle: #ef7a6c;
+    --throttle-soft: #3d2320;
+    --good: #5cc38f;
+    --good-soft: #193326;
+    --code-bg: #232a36;
+    --throttle-2: #a8473c;
+    --tip-bg: #e6e9ef;
+    --tip-ink: #12151c;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #12151c;
+  --surface: #1a1f29;
+  --ink: #e6e9ef;
+  --muted: #9aa3b3;
+  --rule: #2c3340;
+  --aue: #e3a14a;
+  --aue-soft: #3a2c19;
+  --eus: #7aa7e6;
+  --eus-soft: #1d2b40;
+  --throttle: #ef7a6c;
+  --throttle-soft: #3d2320;
+  --good: #5cc38f;
+  --good-soft: #193326;
+  --code-bg: #232a36;
+  --throttle-2: #a8473c;
+  --tip-bg: #e6e9ef;
+  --tip-ink: #12151c;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.7;
+  padding-inline: 16px;
+  padding-block: 40px 72px;
+}
+main { max-width: 880px; margin: 0 auto; display: grid; gap: 48px; }
+h1, h2, h3 { text-wrap: balance; line-height: 1.3; margin: 0; }
+h1 { font-size: clamp(26px, 4vw, 34px); font-weight: 700; letter-spacing: -0.01em; }
+h2 { font-size: 21px; font-weight: 600; }
+h3 { font-size: 16px; font-weight: 600; }
+p { margin: 0; max-width: 68ch; }
+code, .mono { font-family: var(--mono); font-size: 0.88em; }
+code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+section { display: grid; gap: 16px; }
+.eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+
+header { display: grid; gap: 14px; border-bottom: 1px solid var(--rule); padding-bottom: 28px; }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 20px; color: var(--muted); font-size: 13px; }
+.meta span b { color: var(--ink); font-weight: 500; }
+
+.verdict { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+.verdict article { background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 18px 20px; display: grid; gap: 8px; align-content: start; }
+.verdict .tag { font-family: var(--mono); font-size: 12px; font-weight: 500; }
+.verdict .figure { font-family: var(--mono); font-size: 26px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.verdict .figure small { font-size: 13px; color: var(--muted); font-weight: 400; }
+.verdict p { font-size: 14px; color: var(--muted); }
+
+.region-aue { color: var(--aue); }
+.region-eus { color: var(--eus); }
+.throttle { color: var(--throttle); }
+
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { padding: 9px 14px; text-align: left; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+th { font-weight: 500; color: var(--muted); font-size: 12.5px; }
+tr:last-child td { border-bottom: 0; }
+td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
+th.num { text-align: right; }
+.pill { display: inline-block; font-family: var(--mono); font-size: 12px; padding: 1px 8px; border-radius: 999px; }
+.pill.good { background: var(--good-soft); color: var(--good); }
+.pill.bad { background: var(--throttle-soft); color: var(--throttle); }
+.pill.warn { background: var(--aue-soft); color: var(--aue); }
+
+.charts { display: grid; gap: 20px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+
+.tl { position: relative; background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 16px 18px 12px; display: grid; gap: 8px; margin: 0; }
+.tl header { border: 0; padding: 0; gap: 2px; }
+.tl svg { width: 100%; height: auto; display: block; touch-action: pan-y; }
+.tl svg:focus-visible { outline: 2px solid var(--eus); outline-offset: 2px; border-radius: 4px; }
+.tl .sub { font-size: 13px; color: var(--muted); }
+.tl-tip { position: absolute; pointer-events: none; background: var(--tip-bg); color: var(--tip-ink); font-size: 12.5px; line-height: 1.55; padding: 8px 10px; border-radius: 6px; min-width: 190px; font-variant-numeric: tabular-nums; box-shadow: 0 4px 14px rgb(0 0 0 / 0.18); }
+.tl-tip b { font-weight: 600; }
+.tl-tip .row { display: flex; justify-content: space-between; gap: 14px; }
+.tl-tip .k { opacity: 0.75; }
+.defs { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; font-size: 14px; margin: 0; }
+.defs dt { font-weight: 500; }
+.defs dd { margin: 0; color: var(--muted); }
+@media (max-width: 520px) { .defs { grid-template-columns: 1fr; gap: 2px; } .defs dd { margin-bottom: 6px; } }
+
+ol.findings { margin: 0; padding-left: 22px; display: grid; gap: 14px; }
+ol.findings li { padding-left: 4px; }
+ol.findings li p { margin-top: 4px; color: var(--muted); }
+ul.plain { margin: 0; padding-left: 20px; display: grid; gap: 8px; }
+
+.timeline { display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px; font-size: 14px; }
+.timeline dt { font-family: var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.timeline dd { margin: 0; }
+
+.note { border-left: 3px solid var(--rule); padding: 4px 0 4px 14px; color: var(--muted); font-size: 14px; }
+
+@media (max-width: 520px) {
+  body { padding-block: 24px 48px; }
+  .timeline { grid-template-columns: 1fr; gap: 2px; }
+  .timeline dd { margin-bottom: 8px; }
+}
+</style>
+
+<main>
+  <header>
+    <span class="eyebrow">Azure Foundry · gpt-image-2 · Global Provisioned</span>
+    <h1>PTU 멀티리전 라우팅 실험 · 60분</h1>
+    <p>eastus 와 australiaeast 에 <code>gpt-image-2</code> 를 100 PTU 씩 배포하고, 두 리전 합계 용량(200 PTU)만큼의 요청을 5초마다 나눠 <strong>전략별로 60분씩</strong> 보냈다. 구성은 1차 실험(3분)과 같고 달라진 것은 실행 길이와 기록 방식이다. 이번에는 시도마다 절대 UTC 시각을 남겨, Azure Monitor 의 분 단위 값과 정렬을 추정하지 않고 맞춘다.</p>
+    <div class="meta">{{META_ROWS}}</div>
+  </header>
+
+  <section id="question">
+    <span class="eyebrow">이번에 답하려는 것</span>
+    <h2>지표가 재는 창은 얼마나 긴가</h2>
+    <p>1차 실험(3분)은 <code>AzureOpenAIProvisionedManagedUtilizationV2</code> 가 순간값 게이지인지 그 분에 처리한 양인지 정하지 못했다. 표본이 분 단위로 3~8개뿐이었고, 실행 시작 시각을 초 단위로 남기지 않아 정렬을 사후에 추정해야 했기 때문이다.</p>
+    <p>두 후보는 사실 하나의 식에서 갈라진다. 지표가 <strong>어떤 시각 s 의 직전 <span class="mono">width</span> 초 동안 처리한 양</strong>이라면, <span class="mono">width</span>=60 이고 s 가 분의 끝일 때 그것이 곧 '그 분의 처리량' 이다. 그래서 물어야 할 것은 둘 중 무엇이냐가 아니라 <strong>창 길이 <span class="mono">width</span> 와, 분 버킷 시작으로부터 표본을 뜬 위상 <span class="mono">phase</span></strong> 다.</p>
+    <p>이번 실행은 두 전략을 각각 60분 돌려 분 단위 표본을 리전당 60개 넘게 모았고, 시도마다 절대 UTC 시각을 남겼다. primary 전환이 반복되면서 생기는 램프의 기울기가 창 길이를 드러낸다.</p>
+    {{VERDICT}}
+  </section>
+
+  <section id="result">
+    <h2>결과</h2>
+    {{RESULT_TABLE}}
+    <h3>{{STEP}}초 구간별 지표</h3>
+    <div class="legend">
+      <span><i style="background:var(--aue)"></i>australiaeast</span>
+      <span><i style="background:var(--eus)"></i>eastus</span>
+      <span><i style="background:var(--throttle)"></i>429</span>
+      <span><i style="background:var(--muted)"></i>p90 · 실측 계단선은 점선</span>
+    </div>
+    <div class="charts" id="timeline"></div>
+    <dl class="defs">
+      <dt>시도</dt><dd>{{STEP}}초 안에 <em>보낸</em> 시도를 시도 순번·리전·상태로 나눠 쌓았다. 요청 수가 아니라 시도 수다.</dd>
+      <dt>primary</dt><dd>그 구간의 1차 시도가 가장 많이 간 리전.</dd>
+      <dt>버킷 수위</dt><dd>클라이언트가 leaky bucket 으로 추정한 사용률. 1초마다 찍어 {{LEVEL_STEP}}초 격자에 올렸다.</dd>
+      <dt>최근 60초 처리량</dt><dd>구간이 끝나는 시각 기준으로 직전 60초 동안 200 을 받은 시도의 정규화 토큰 합을, 그 리전 100 PTU 의 분당 용량으로 나눈 값. 점선 계단은 Azure Monitor 실측이다.</dd>
+      <dt>실측 − 예측</dt><dd>실측값에서, 적합한 (width, phase) 로 계산한 예측값을 뺀 차(%p). 0 에 붙어 있을수록 그 가설이 데이터를 설명한다.</dd>
+      <dt>응답 시간</dt><dd>요청 하나의 첫 시도를 보낸 때부터 마지막 시도가 끝날 때까지. 리전 전환과 재시도, 보낼 리전이 없어 기다린 시간이 모두 들어 있다. 세로축은 98 백분위에서 잘라, 그보다 높은 칸은 위에 붙어 그려진다. 정확한 값은 위 표의 p99 와 툴팁에 있다.</dd>
+    </dl>
+    {{OBSERVATIONS}}
+  </section>
+
+  <section id="fit">
+    <h2>창 길이 적합</h2>
+    <p>클라이언트 기록에서 "리전 r 에서 시각 s 직전 <span class="mono">width</span> 초 동안 200 을 받은 시도의 정규화 토큰 합" 을 만들고, 분당 용량 대비 %로 바꿔 실측값과 견줬다. 분 버킷 시작 <span class="mono">T</span> 인 점의 예측은 <span class="mono">s = T + phase</span> 로 계산한다. <span class="mono">phase</span> 는 {{PHASE_STEP}}초 간격으로 0~60초를 훑었다.</p><p class="note">메트릭 조회 창은 실행 구간을 앞뒤로 5분씩 넓히므로, 한 실행의 조회 꼬리에 다음 실행의 트래픽이 들어온다. 그런 점은 실측이 0 이 아닌데 이 실행의 기록으로는 0 을 예측해 적합을 망가뜨리므로 뺐다. 앞쪽도 어떤 창 길이로 되돌아봐도 실행 안에 머무르는 점만 남겼다. 아래 잔차 그림과 위 차트의 잔차 칸은 모두 이렇게 남은 점만 그린다.</p>
+    {{FIT_TABLE}}
+    <p class="note">창 길이를 바꾸면 위상도 같이 움직이므로 표는 창마다 그 창에서 가장 잘 맞는 위상을 함께 싣는다. width=60·phase=60 인 칸이 바로 "그 분에 처리한 양" 가설이다. 그 칸과 최적 칸의 RMSE 차이가 두 해석을 가르는 근거다.</p><p><strong>고르는 데 쓰지 않은 점으로 다시 쟀다.</strong> 후보가 창 길이 10가지 × 위상 61가지 = 610가지라, 그중 가장 잘 맞는 하나를 고른 뒤 같은 점으로 잰 RMSE 는 낙관적일 수밖에 없다. 그래서 분 단위 점을 번갈아 둘로 나눠 한쪽으로만 맞추고 나머지 {{HOLDOUT_N}}개 점에서 다시 쟀다. 절반으로 고른 값은 <span class="mono">{{HOLDOUT_PICK}}</span> 로 전체로 고른 값과 <strong>{{HOLDOUT_SAME}}</strong>, 그때의 RMSE 는 <strong>{{HOLDOUT_RMSE}}%p</strong> 다.</p><p>잔차는 위 차트의 다섯 번째 칸에 리전별로 찍혀 있다. 잔차가 0 주변에 고르게 흩어져 있으면 남은 오차는 잡음이고, 전환 구간마다 한쪽으로 쏠리면 창 모양 자체가 다르다는 뜻이다.</p>
+  </section>
+
+  <section id="throttle">
+    <h2>capacity-aware 에 429 가 남은 이유</h2>
+    <p>capacity-aware 는 추정 사용량이 한도에 닿기 전에 리전을 옮기므로 429 가 0 이어야 한다. 그런데도 429 를 받았다면 둘 중 하나다. <strong>판단이 틀렸거나</strong>(추정이 이미 한도를 넘었는데 보냈다), <strong>장부가 틀렸거나</strong>(추정은 한도 아래인데 서비스는 이미 꽉 찼다). 429 를 받은 순간의 추정 수위가 그것을 가른다.</p>
+    {{DIAGNOSIS}}
+    <p>429 의 대부분이 <strong>추정 수위가 한도 아래일 때</strong> 돌아왔다. 판단 로직이 아니라 장부가 낮게 깔린 것이다. 그 크기는 실측 잔차에서 직접 읽힌다. 잔차가 양수라는 것은 서비스가 클라이언트 장부보다 더 썼다고 보고했다는 뜻이고, 그 값이 응답을 못 받은 시도의 양과 거의 같다.</p>
+    <p>응답이 없으면 라우터는 예약을 되돌려 준다(<code>routing.py</code> 의 <code>tracker.release</code>). 그런데 서비스는 그 요청을 이미 처리했을 수 있다. 그만큼이 장부에서 빠지고, <code>headroom</code> 이 1.0 이면 오차를 흡수할 여유가 0 이라 바로 429 가 된다. 잔차가 0.99%p 단위로 떨어지는 것도 같은 이야기다 — 요청 하나가 그 리전 분당 용량의 약 1% 이므로, &ldquo;분당 한두 건이 장부에서 빠졌다&rdquo;는 뜻이다.</p>
+    <p class="note">덧붙여, 이 실험이 보낸 부하는 합계 용량의 100% 를 조금 넘는다. 두 리전이 동시에 100% 아래로 내려가는 안정점이 존재하지 않으므로, 초과분은 어딘가로 버려져야 한다. 429-spillover 는 429 로 버리고 capacity-aware 는 기다림으로 버린다. 위 표의 &ldquo;두 리전 동시 포화&rdquo; 비율과 결과 표의 &ldquo;벽시계 초과&rdquo; 가 같은 사실의 두 면이다. 429 를 줄이려면 <code>--headroom</code> 을 1.0 보다 낮추고 응답 없는 시도를 소비된 것으로 처리해야 하며, 그만큼 대기가 늘어난다.</p>
+  </section>
+
+  <section id="conclusion">
+    <h2>결론</h2>
+    <ol class="findings"><li><strong>지표는 직전 {{FIT_WIDTH}}초를 재는 속도 게이지다.</strong><p>실측 {{FIT_POINTS}}개 점에 대해 창 길이 {{FIT_WIDTH}}초·위상 {{FIT_PHASE}}초가 RMSE {{FIT_RMSE}}%p 로 가장 잘 맞았다. 값이 누적량이라면 창 길이를 바꿔도 램프 기울기가 설명되지 않는데, 전환 직후 올라가고 내려가는 데 걸리는 시간이 이 창 길이와 같다.</p></li><li><strong>분 단위 값 하나는 그 분의 원시 표본 하나다.</strong><p>average·maximum·minimum 이 모두 같은 분이 {{SAMPLE_SAME}}/{{SAMPLE_TOTAL}} 이다. 분 안에서 여러 값을 모아 평균 낸 것이 아니라 한 번 뜬 점을 그대로 싣는다. PT1M 이 최소 간격이고 Total 집계가 없는 것도 같은 이야기다.</p></li><li><strong>그래서 "게이지냐 처리량이냐" 는 위상의 문제였다.</strong><p>직전 60초 처리량을 60초마다 한 번씩 뜨면 창들이 빈틈없이 이어 붙는다. 총량이 맞으면서도 분 단위로는 어긋나던 1차 실험의 결과가 여기서 설명된다. 총량은 어느 해석에서나 같고, 다른 것은 표본을 뜬 시각뿐이다.</p></li><li><strong>운영에 쓰려면 지연을 감안해야 한다.</strong><p>표본은 분에 한 번이고 직전 {{FIT_WIDTH}}초를 되돌아본다. 이 값으로 라우팅을 판단하면 최악의 경우 한 분 넘게 묵은 그림을 보게 된다. 클라이언트가 자기 버킷을 추정하는 쪽이 빠른 이유다.</p></li></ol>
+  </section>
+
+  <section id="setup">
+    <h2>구성</h2>
+    <dl class="defs"><dt>모델·배포</dt><dd>gpt-image-2, Global Provisioned Managed, 리전당 100 PTU. Traffic spillover 는 비워 두었다. 배포는 실행이 끝나자마자 지웠다.</dd><dt>부하</dt><dd><code>--load-ptu 200 --interval 5 --duration 3600</code>. 200 PTU 가 1분에 처리할 만큼을 5초마다 나눠 보낸다. 두 리전 합계가 200 PTU 이므로 합계 대비로는 100%, 한 리전 대비로는 200% 다.</dd><dt>클라이언트</dt><dd>한국(KST)의 로컬 Mac. 설정의 클라이언트 리전 <code>ap-southeast-2</code> 는 리전 우선순위를 정하는 데만 썼다. 응답 시간에는 한국에서 두 리전으로 나가는 경로가 들어 있다.</dd><dt>실행 순서</dt><dd>429-spillover 60분 → 90초 대기 → capacity-aware 60분. 대기는 앞 실행의 버킷이 빠질 시간을 준다.</dd><dt>기록</dt><dd><code>--record</code> 로 시도별 절대 UTC 시각·예약량, 1초 간격 추정 사용률, 실행 직후 받은 Azure Monitor 값을 한 파일에 담았다.</dd></dl>
+  </section>
+
+  <section id="limits">
+    <h2>한계</h2>
+    <ul class="plain"><li>처리한 토큰은 응답의 usage 가 아니라 <strong>시도에 기록된 예약량</strong>이다. gpt-image-2 는 같은 프롬프트·같은 크기면 usage 가 거의 상수라 차이가 작지만, 0 은 아니다.</li><li>응답을 못 받은 시도가 두 실행 합쳐 <strong>{{NO_STATUS}}건</strong>(전체 시도의 {{NO_STATUS_PCT}}%) 있었다. 클라이언트는 이것을 처리된 일로 세지 않지만 서비스는 이미 일을 했을 수 있다. 그만큼 예측이 실측보다 낮게 잡힌다.</li><li>기록에 <code>retry-after-ms</code> 헤더 값이 없다. 429 가 언제 몇 건 났는지는 알 수 있어도 서비스가 얼마를 기다리라고 했는지는 1차 리포트를 봐야 한다.</li><li>적합은 창 길이를 정해진 후보 중에서만 고른다. 실제 창이 후보 사이에 있으면 가장 가까운 값으로 잡힌다.</li><li>같은 PTU 배포를 다른 클라이언트가 함께 쓰지 않았다는 전제 위에 있다. 이 구독의 전용 실험 배포이지만, 확인한 것은 아니다.</li><li>리전 두 개, 모델 하나, 한 번의 실행이다. 다른 모델이나 다른 리전에서 같은 창 길이가 나온다는 보장은 없다.</li></ul>
+  </section>
+</main>
+
+<script>
+(function () {
+  var DATA = {{DATA_JSON}};
+  var METRIC = {{METRIC_JSON}};
+  var META = {{META_JSON}};
+
+  var STEP = META.step, SPAN = META.span, LEVEL_STEP = META.levelStep;
+  var REGIONS = META.regions;
+  var REGION_COLOR = ["var(--aue)", "var(--eus)", "var(--good)"];
+  var STATUS_COLOR = { 429: "var(--throttle)", 404: "var(--muted)", 500: "var(--muted)" };
+  var ORDINAL = ["1차", "2차", "3차", "4차", "5차"];
+  var FIGS = META.figs;
+  // 전환이 이보다 많으면 세로선이 차트를 덮어 버려 primary 띠만으로 읽는다.
+  var MAX_SWITCH_MARKS = 12;
+
+  var W = 980, L = 62, R = 14;
+  var plotW = W - L - R;
+  var PANELS = [
+    { id: "sent", title: "시도 (건 / " + STEP + "초)", h: 104, max: META.sentMax, ticks: META.sentTicks },
+    { id: "primary", title: "primary", h: 16, strip: true },
+    { id: "level", title: "버킷 수위 (%)", h: 84, max: 130, ticks: [0, 50, 100], limit: 100 },
+    { id: "roll", title: "최근 60초 처리량 (% of 100 PTU) · 점선은 Azure Monitor 실측", h: 92, max: 220, ticks: [0, 100, 200], limit: 100 },
+    { id: "resid", title: "실측 − 예측 (%p)", h: 72, min: -60, max: 60, ticks: [-50, 0, 50] },
+    { id: "rt", title: "응답 시간 p50 · p90 (초)", h: 72, max: META.rtMax, ticks: META.rtTicks }
+  ];
+  var GAP = 30, TOP = 22, AXIS = 26;
+  var H = TOP + PANELS.reduce(function (sum, p) { return sum + p.h + GAP; }, 0) - GAP + AXIS;
+  var NS = "http://www.w3.org/2000/svg";
+  var x = function (t) { return L + (t / SPAN) * plotW; };
+  var slot = plotW / (SPAN / STEP);
+
+  function el(name, attrs, text) {
+    var node = document.createElementNS(NS, name);
+    Object.keys(attrs).forEach(function (k) { node.setAttribute(k, attrs[k]); });
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+  function label(svg, px, py, text, anchor, color, size) {
+    svg.appendChild(el("text", { x: px, y: py, "text-anchor": anchor || "start",
+      "font-size": size || 11, "font-family": "var(--mono)", fill: color || "var(--muted)" }, text));
+  }
+  function polyline(svg, pts, color, width, dash) {
+    var d = "", pen = false;
+    pts.forEach(function (pt) {
+      if (pt === null) { pen = false; return; }
+      d += (pen ? "L" : "M") + pt[0].toFixed(1) + " " + pt[1].toFixed(1);
+      pen = true;
+    });
+    var attrs = { d: d, fill: "none", stroke: color, "stroke-width": width || 1.6, "stroke-linejoin": "round" };
+    if (dash) attrs["stroke-dasharray"] = dash;
+    svg.appendChild(el("path", attrs));
+  }
+  function regionColor(index) { return REGION_COLOR[index % REGION_COLOR.length]; }
+  function segColor(seg) { return STATUS_COLOR[seg[2]] || regionColor(seg[1]); }
+  function segName(seg) {
+    return ORDINAL[Math.min(seg[0] - 1, ORDINAL.length - 1)] + " " + REGIONS[seg[1]] + " " + (seg[2] === null ? "무응답" : seg[2]);
+  }
+  function fmt(v, digits) { return v === null || v === undefined ? "–" : v.toFixed(digits === undefined ? 1 : digits); }
+
+  function draw(fig) {
+    var run = DATA[fig.key], B = run.buckets;
+    var svg = el("svg", { viewBox: "0 0 " + W + " " + H, role: "img", tabindex: "0",
+      "aria-label": fig.title + " " + STEP + "초 구간별 지표. 좌우 화살표로 구간을 옮긴다." });
+    var top = TOP, frames = {};
+    PANELS.forEach(function (panel) {
+      var panelTop = top, low = panel.min || 0;
+      var y = function (v) {
+        var clamped = Math.max(low, Math.min(v, panel.max));
+        return panelTop + panel.h - ((clamped - low) / (panel.max - low)) * panel.h;
+      };
+      frames[panel.id] = { y: y, top: panelTop, h: panel.h };
+      label(svg, L, panelTop - 7, panel.title, "start", "var(--ink)", 11.5);
+      (panel.ticks || []).forEach(function (v) {
+        svg.appendChild(el("line", { x1: L, x2: W - R, y1: y(v), y2: y(v),
+          stroke: "var(--rule)", "stroke-width": v === 0 && low < 0 ? 1.4 : 1 }));
+        label(svg, L - 8, y(v) + 4, String(v), "end");
+      });
+      if (panel.limit) {
+        svg.appendChild(el("line", { x1: L, x2: W - R, y1: y(panel.limit), y2: y(panel.limit),
+          stroke: "var(--muted)", "stroke-width": 1.2, "stroke-dasharray": "5 4" }));
+      }
+      top += panel.h + GAP;
+    });
+
+    // 1. 시도: 시도 순서대로 아래부터
+    var fs = frames.sent, barW = Math.max(1.2, slot * 0.8);
+    B.forEach(function (b) {
+      var base = 0, bx = x(b.t) + (slot - barW) / 2;
+      b.segs.forEach(function (seg) {
+        var y1 = fs.y(base + seg[3]), y0 = fs.y(base);
+        var rect = el("rect", { x: bx, y: y1, width: barW, height: Math.max(0, y0 - y1), fill: segColor(seg) });
+        rect.appendChild(el("title", {}, b.t + "–" + (b.t + STEP) + "초 · " + segName(seg) + " " + seg[3] + "건"));
+        svg.appendChild(rect);
+        base += seg[3];
+      });
+    });
+
+    // 2. primary 띠
+    var fp = frames.primary;
+    B.forEach(function (b) {
+      if (b.primary === null) return;
+      var rect = el("rect", { x: x(b.t), y: fp.top, width: slot + 0.4, height: fp.h,
+        fill: regionColor(b.primary), opacity: 0.85 });
+      rect.appendChild(el("title", {}, b.t + "–" + (b.t + STEP) + "초 · primary " + REGIONS[b.primary]));
+      svg.appendChild(rect);
+    });
+
+    // 전환 시점: 몇 번 안 될 때만 세로선으로 표시한다
+    var chartTop = frames.sent.top, chartBottom = frames.rt.top + frames.rt.h;
+    if ((run.switches || []).length <= MAX_SWITCH_MARKS) {
+      run.switches.forEach(function (t) {
+        svg.appendChild(el("line", { x1: x(t), x2: x(t), y1: chartTop - 6, y2: chartBottom,
+          stroke: "var(--ink)", "stroke-width": 1.1, "stroke-dasharray": "4 4", opacity: 0.5 }));
+      });
+    }
+
+    // 3. 버킷 수위
+    var fl = frames.level;
+    run.levels.forEach(function (series, index) {
+      polyline(svg, series.map(function (v, i) { return [x(i * LEVEL_STEP), fl.y(v)]; }),
+        regionColor(index), 1.3);
+    });
+
+    // 4. 최근 60초 처리량 + Azure Monitor 실측 계단선
+    var fr = frames.roll;
+    REGIONS.forEach(function (_, index) {
+      polyline(svg, B.map(function (b) { return [x(b.t + STEP), fr.y(b.roll[index])]; }),
+        regionColor(index), 1.3);
+    });
+    (METRIC[fig.key] || []).forEach(function (steps, index) {
+      steps.forEach(function (seg) {
+        svg.appendChild(el("path", {
+          d: "M" + x(seg[0]).toFixed(1) + " " + fr.y(seg[2]).toFixed(1) +
+             "L" + x(seg[1]).toFixed(1) + " " + fr.y(seg[2]).toFixed(1),
+          fill: "none", stroke: regionColor(index), "stroke-width": 2.6,
+          "stroke-dasharray": "2 3", "stroke-linecap": "round", opacity: 0.95
+        }));
+      });
+    });
+
+    // 5. 실측 − 예측 잔차
+    var fd = frames.resid;
+    (run.residuals || []).forEach(function (series, index) {
+      series.forEach(function (point) {
+        svg.appendChild(el("circle", { cx: x(point[0]), cy: fd.y(point[1]), r: 1.8,
+          fill: regionColor(index), opacity: 0.85 }));
+      });
+    });
+
+    // 6. 응답 시간
+    var fa = frames.rt;
+    polyline(svg, B.map(function (b) { return b.rt90 === null ? null : [x(b.t) + slot / 2, fa.y(b.rt90)]; }), "var(--muted)", 1.1);
+    polyline(svg, B.map(function (b) { return b.rt === null ? null : [x(b.t) + slot / 2, fa.y(b.rt)]; }), "var(--ink)", 1.4);
+
+    for (var t = 0; t <= SPAN; t += META.tick) label(svg, x(t), H - 8, (t / 60) + "분", "middle");
+
+    var cursor = el("rect", { x: 0, y: TOP - 4, width: Math.max(slot, 2), height: H - TOP - AXIS + 4,
+      fill: "var(--ink)", opacity: 0.1, visibility: "hidden" });
+    svg.appendChild(cursor);
+    svg.appendChild(el("rect", { x: L, y: 0, width: plotW, height: H, fill: "transparent" }));
+    return { svg: svg, cursor: cursor, buckets: B, run: run };
+  }
+
+  function levelRange(series, from, to) {
+    var lo = Math.floor(from / LEVEL_STEP), hi = Math.min(Math.ceil(to / LEVEL_STEP), series.length - 1);
+    var part = series.slice(lo, hi + 1);
+    if (!part.length) return "–";
+    return Math.min.apply(null, part).toFixed(0) + "–" + Math.max.apply(null, part).toFixed(0) + "%";
+  }
+
+  function tipHtml(fig, b, run) {
+    var rows = b.segs.map(function (seg) { return [segName(seg), seg[3] + "건"]; });
+    rows.push(["primary", b.primary === null ? "–" : REGIONS[b.primary]]);
+    REGIONS.forEach(function (name, index) {
+      rows.push(["수위 " + name, levelRange(run.levels[index], b.t, b.t + STEP)]);
+    });
+    rows.push(["60초 처리량", b.roll.map(function (v) { return fmt(v) + "%"; }).join(" · ")]);
+    rows.push(["응답 시간 p50 · p90", b.rt === null ? "–" : fmt(b.rt, 1) + "초 · " + fmt(b.rt90, 1) + "초"]);
+    rows.push(["429 맞은 요청", b.n429req + " / " + b.n + "건"]);
+    rows.push(["429 로 늘어난 시간", b.extra === null ? "–" : fmt(b.extra, 1) + "초"]);
+    return "<b>" + fig.title + " · " + (b.t / 60).toFixed(1) + "분</b>" + rows.map(function (r) {
+      return '<div class="row"><span class="k">' + r[0] + "</span><span>" + r[1] + "</span></div>";
+    }).join("");
+  }
+
+  var host = document.getElementById("timeline");
+  FIGS.forEach(function (fig) {
+    var box = document.createElement("figure");
+    box.className = "tl";
+    var head = document.createElement("header");
+    var h = document.createElement("h3");
+    h.textContent = fig.title;
+    var sub = document.createElement("span");
+    sub.className = "sub";
+    sub.textContent = fig.sub;
+    head.appendChild(h);
+    head.appendChild(sub);
+    box.appendChild(head);
+    var chart = draw(fig);
+    box.appendChild(chart.svg);
+    var tip = document.createElement("div");
+    tip.className = "tl-tip";
+    tip.hidden = true;
+    box.appendChild(tip);
+    host.appendChild(box);
+
+    var current = -1;
+    function show(index) {
+      index = Math.max(0, Math.min(chart.buckets.length - 1, index));
+      current = index;
+      var b = chart.buckets[index];
+      chart.cursor.setAttribute("x", x(b.t));
+      chart.cursor.setAttribute("visibility", "visible");
+      tip.innerHTML = tipHtml(fig, b, chart.run);
+      tip.hidden = false;
+      var svgBox = chart.svg.getBoundingClientRect(), boxRect = box.getBoundingClientRect();
+      var scale = svgBox.width / W;
+      var left = svgBox.left - boxRect.left + (x(b.t) + slot + 10) * scale;
+      if (left + tip.offsetWidth > boxRect.width - 8) {
+        left = svgBox.left - boxRect.left + (x(b.t) - 10) * scale - tip.offsetWidth;
+      }
+      tip.style.left = Math.max(8, left) + "px";
+      tip.style.top = (svgBox.top - boxRect.top + 26 * scale) + "px";
+    }
+    function hide() { chart.cursor.setAttribute("visibility", "hidden"); tip.hidden = true; }
+    chart.svg.addEventListener("pointermove", function (ev) {
+      var r = chart.svg.getBoundingClientRect();
+      var px = (ev.clientX - r.left) / r.width * W;
+      if (px < L || px > W - R) { hide(); return; }
+      show(Math.floor((px - L) / slot));
+    });
+    chart.svg.addEventListener("pointerleave", hide);
+    chart.svg.addEventListener("focus", function () { show(current < 0 ? 0 : current); });
+    chart.svg.addEventListener("blur", hide);
+    chart.svg.addEventListener("keydown", function (ev) {
+      if (ev.key === "ArrowRight") { show(current + 1); ev.preventDefault(); }
+      if (ev.key === "ArrowLeft") { show(current - 1); ev.preventDefault(); }
+    });
+  });
+})();
+</script>
