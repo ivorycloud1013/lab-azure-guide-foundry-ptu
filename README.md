@@ -18,6 +18,7 @@ Microsoft Foundry 에서 [PTU(Provisioned Throughput Unit)](https://learn.micros
 
 - PTU 는 처리 용량(throughput)을 시간 단위로 구매하는 배포 방법으로, PTU 모델 배포가 완료되면 과금이 발생한다. **⚠️ 꼭, 미사용시에는 PTU 모델 배포를 삭제해야 한다.** ([AI Portal 에서 PTU 배포하기](#2-ai-portal-에서-ptu-배포하기) 참고)
 - PTU 모델 배포의 처리 용량을 초과하는 요청은 Too Many Requests (429 HTTP Status Code) 로 즉시 응답한다. 이에 대한 retry 나 spillover 전략을 갖춰야 한다 ([Sample Code](#3-sample-code) 참고).
+- 429 외의 HTTP Status Code 별 처리는 [gpt-image-2.5 HTTP Status Code 가이드](http-status-codes/README.md) 에서 다룬다.
 
 ---
 
@@ -185,6 +186,7 @@ Repository 는 foundry 의 모델 배포 엔드포인트에 대한 Python 클라
 | `foundry-model-deploy-basic.py` | 기본 호출 로직. 이미지의 경우 `generate()` 과 `edit()` 호출 예시 제공 |
 | `foundry-model-ptu-deploy-429-spillover.py` | PTU 모델 배포의 spillover 제어 로직. 서버측과 클라이언트측 예시 제공 |
 | `foundry-model-ptu-deploy-429-retry.py` | PTU 모델 배포의 429 HTTP Status code `retry-after-ms` 제어 로직. 백오프 예시 제공 |
+| `http-status-codes/gpt-image-edit.py` | `gpt-image-2.5` 의 `images.edit` 호출과 상태 코드별 예외 처리 스니펫 ([가이드](http-status-codes/README.md)) |
 
 Python 코드들에 대한 실행 환경은 다음과 같다.
 
