@@ -102,8 +102,8 @@ def main() -> int:
         log.error("연결 실패 — %s", e)
         return 1
 
-    except Exception as e:
-        log.error("예외 — %s", e)
+    except Exception:                                         # 예상하지 못한 오류
+        log.exception("예외")                                  # 트레이스백까지 남긴다
         return 1
 
 
