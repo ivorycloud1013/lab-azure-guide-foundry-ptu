@@ -2,3 +2,7 @@
 __pycache__/
 *.pyc
 output-*.png
+
+# Word 임시 파일
+~$*.docx
+.DS_Store
