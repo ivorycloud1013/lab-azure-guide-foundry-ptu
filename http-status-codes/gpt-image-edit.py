@@ -21,8 +21,10 @@ ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT", "https://<resource>.openai.azure.c
 DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-image-2.5-flare")
 ENTRA_SCOPE = "https://ai.azure.com/.default"
 
-INPUT_IMAGE = Path("input.png")       # 장당 50MB 미만, 최대 16장, PNG/JPG
+INPUT_IMAGE = Path("input.png")       # 장당 50MB 미만, 최대 16장, PNG · JPEG · WEBP
 OUTPUT_IMAGE = Path("output.png")
+
+MS_PER_SEC = 1000
 
 def request_id(e: openai.APIStatusError) -> Optional[str]:
     """지원 요청에 첨부할 ID. Azure 는 apim-request-id 로 준다."""
@@ -30,9 +32,19 @@ def request_id(e: openai.APIStatusError) -> Optional[str]:
 
 
 def retry_after_ms(e: openai.APIStatusError) -> Optional[int]:
-    """429 의 대기 시간. 본문 메시지의 'retry after N seconds' 가 아니라 헤더를 본다."""
-    raw = e.response.headers.get("retry-after-ms")
-    return int(raw) if raw and raw.isdigit() else None
+    """429 의 대기 시간. 본문 메시지의 'retry after N seconds' 가 아니라 헤더를 본다.
+
+    PTU 배포는 retry-after-ms(밀리초) 로 주지만 Standard 배포는 주지 않는다.
+    그쪽은 Retry-After(초) 를 보내므로 둘 다 읽는다.
+    """
+    headers = e.response.headers
+    raw_ms = headers.get("retry-after-ms")
+    if raw_ms and raw_ms.isdigit():
+        return int(raw_ms)
+    raw_sec = headers.get("retry-after") or headers.get("x-ratelimit-reset-requests")
+    if raw_sec and raw_sec.isdigit():
+        return int(raw_sec) * MS_PER_SEC
+    return None
 
 
 client = OpenAI(
@@ -65,8 +77,11 @@ def main() -> int:
         return 1                                              # 고치기 전에는 재시도해도 같다
 
     except openai.AuthenticationError as e:                   # 401
+        # Entra 토큰 계열 401 은 본문이 {"statusCode": 401, "message": …} 라 e.code 가 None 이다.
+        # 401 을 code 로 분기하지 않고 예외 클래스로만 받는다.
         log.error("인증 실패 — api-key 또는 토큰 scope(%s) 와 az login 상태 확인. request_id=%s",
                   ENTRA_SCOPE, request_id(e))
+        log.debug("401 body: %s", e.body)
         return 1
 
     except openai.PermissionDeniedError as e:                 # 403
