@@ -234,15 +234,32 @@ Entra 토큰 계열 — scope(audience) 가 다르거나, 서명이 깨졌거나
 - 원인: 모델 배포의 사용 quota 초과
 - 대응: 응답 헤더의 대기 시간만큼 기다린 뒤 재시도 ([PTU 가이드](../README.md#33-foundry-model-ptu-deploy-429-spilloverpy) 참고)
 
-대기 시간 헤더는 배포 유형에 따라 다르다. **Standard 배포에는 `retry-after-ms` 가 오지 않으므로** 한쪽만 읽으면 대기 시간을 놓친다.
+대기 시간 헤더는 **429 를 돌려준 계층**에 따라 다르다. 모델 추론이 돌려준 429 에는 Standard · PTU 모두 `retry-after-ms` 가 오지만, 게이트웨이가 먼저 끊은 429(`RateLimitReached`) 에는 오지 않는다. 한쪽만 읽으면 대기 시간을 놓친다.
 
 | 헤더 | 값 예시 | 의미 |
 |---|---|---|
-| `retry-after-ms` | `26000` | PTU 배포의 재시도 대기 밀리초 |
-| `Retry-After` | `39` | Standard 배포의 재시도 대기 초 |
+| `retry-after-ms` | `29853` (Standard) · `831` (PTU) | 재시도 대기 밀리초. 더 정밀하므로 우선 쓴다. 게이트웨이 429 에는 오지 않는다 |
+| `Retry-After` | `29` (Standard) · `1` (PTU) | 재시도 대기 초. 세 가지 429 에 모두 온다 |
 | `x-ratelimit-reset-requests` | `39` | 요청 쿼터 리셋까지 남은 초 |
 | `x-ratelimit-limit-requests` | `2` | 분당 허용 요청 수 |
 | `x-ratelimit-remaining-requests` | `0` | 남은 요청 수 (429 가 아닌 응답에도 온다) |
+
+본문은 세 가지로 왔다. **`code` 로 분기하면 안 되고 상태 코드로 받아야 한다.**
+
+Standard 추론 — 가장 흔하다. `retry-after-ms` 29853 을 함께 받았다.
+
+```json
+{
+  "error": {
+    "message": "Your requests to gpt-image-2.5-flare for gpt-image-2.5-flare in eastus2 have exceeded request rate limit.",
+    "type": "too_many_requests",
+    "param": null,
+    "code": "rate_limit_exceeded"
+  }
+}
+```
+
+게이트웨이 — `type` · `param` 이 없고 `retry-after-ms` 도 오지 않는다.
 
 ```json
 {
@@ -253,7 +270,20 @@ Entra 토큰 계열 — scope(audience) 가 다르거나, 서명이 깨졌거나
 }
 ```
 
-**잘못된 요청도 rate limit 을 소비하고, 429 는 본문 검증보다 먼저 떨어진다.** 파라미터 오류로 400 이 날 요청이라도 쿼터를 다 쓴 상태면 400 대신 429 가 온다. 400 을 "고치기 전에는 재시도해도 같은 결과" 로 분기하더라도, 그 400 이 오기 전에 429 가 올 수 있다.
+PTU — `code` 가 `null` 이고 `type` 이 `invalid_request_error` 다. 100 PTU 배포에서 동시 50 건으로 재현했다.
+
+```json
+{
+  "error": {
+    "message": "Rate limit exceeded.",
+    "type": "invalid_request_error",
+    "param": null,
+    "code": null
+  }
+}
+```
+
+**`images/generations` 에서는 잘못된 요청도 rate limit 을 소비하고, 429 가 본문 검증보다 먼저 떨어진다.** 파라미터 오류로 400 이 날 요청이라도 쿼터를 다 쓴 상태면 400 대신 429 가 온다. 반대로 **`images/edits` 는 본문 검증이 먼저**라 같은 상태에서도 400 이 온다. 두 operation 의 순서가 다르므로 한쪽에서 본 순서를 다른 쪽에 적용하면 안 된다.
 
 ### 500
 
@@ -290,7 +320,7 @@ Entra 토큰 계열 — scope(audience) 가 다르거나, 서명이 깨졌거나
 예외는 `message` · `code` · `param` · `type` · `status_code` · `body` 를 가진다. SDK 가 해주지 않아 스니펫에 함수로 둔 것은 두 가지다.
 
 - `request_id()` — Azure 는 `apim-request-id` 로 주는데 SDK 의 `e.request_id` 는 `x-request-id` 만 읽는다
-- `retry_after_ms()` — 429 를 직접 처리할 때 쓴다. 본문 메시지가 아니라 헤더를 보고, PTU 의 `retry-after-ms`(밀리초) 가 없으면 Standard 의 `Retry-After`(초) 로 폴백한다
+- `retry_after_ms()` — 429 를 직접 처리할 때 쓴다. 본문 메시지가 아니라 헤더를 보고, `retry-after-ms`(밀리초) 가 없으면 `Retry-After`(초) 로 폴백한다
 
 ---
 
@@ -304,7 +334,7 @@ Entra 토큰 계열 — scope(audience) 가 다르거나, 서명이 깨졌거나
 |---|---|
 | `POST` 가 아닌 메서드는 405 | **404** `Resource not found` |
 | 요청 JSON 이 깨지면 400 파싱 에러 | **404 `DeploymentNotFound`** — 라우팅이 본문의 `model` 을 먼저 읽는다 |
-| 429 의 대기 시간은 `retry-after-ms` | Standard 배포는 **`Retry-After`(초)** 만 준다 |
+| `retry-after-ms` 는 PTU 전용 | **Standard 추론 429 에도 온다**(실측 `29853`). 오지 않는 쪽은 게이트웨이 429(`RateLimitReached`) 다 |
 | 401 은 한 가지 본문 | **세 가지** — api-key 계열 `code: "401"`, Entra 계열은 `error` 래퍼 없이 `statusCode` · `message`, RBAC 미부여는 `code: "PermissionDenied"` |
 | RBAC 미부여는 403 | **401** `PermissionDenied` — 403 은 네트워크 차단만 |
 | 다른 테넌트의 토큰은 401 | **400**, `code` 자리에 문장이 들어온다 |

@@ -34,8 +34,8 @@ def request_id(e: openai.APIStatusError) -> Optional[str]:
 def retry_after_ms(e: openai.APIStatusError) -> Optional[int]:
     """429 의 대기 시간. 본문 메시지의 'retry after N seconds' 가 아니라 헤더를 본다.
 
-    PTU 배포는 retry-after-ms(밀리초) 로 주지만 Standard 배포는 주지 않는다.
-    그쪽은 Retry-After(초) 를 보내므로 둘 다 읽는다.
+    Standard · PTU 모두 추론 단계의 429 에는 retry-after-ms(밀리초) 가 온다.
+    게이트웨이가 먼저 끊은 429 에는 Retry-After(초) 만 오므로 둘 다 읽는다.
     """
     headers = e.response.headers
     raw_ms = headers.get("retry-after-ms")
